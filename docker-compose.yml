@@ -15,9 +15,27 @@ services:
       - OLLAMA_MODEL=qwen2.5:7b
     depends_on:
       duckdb:
-        condition: service_started
+        condition: service_completed_successfully
       ollama-init:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    environment:
+      - VELOCITYIQ_API=http://app:8000
+    depends_on:
+      app:
+        condition: service_started
+    command: ["uv", "run", "streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     restart: unless-stopped
 
   duckdb:
@@ -29,6 +47,7 @@ services:
       - ./data:/data
     environment:
       - DUCKDB_PATH=/data/velocityiq.duckdb
+      - SAMPLE_DATA_ROWS=10000
     restart: on-failure
 
   ollama:

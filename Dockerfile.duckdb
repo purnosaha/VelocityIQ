@@ -2,11 +2,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir duckdb
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY scripts/init_db.py ./scripts/init_db.py
-COPY sql/init.sql ./sql/init.sql
+ENV UV_SYSTEM_PYTHON=1
+ENV UV_NO_CACHE=1
+
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY scripts/ scripts/
+COPY sql/ sql/
 
 RUN mkdir -p /data
 
-CMD ["python", "scripts/init_db.py", "--force"]
+CMD ["uv", "run", "python", "scripts/docker_init.py"]
