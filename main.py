@@ -1,6 +1,8 @@
-def main():
-    print("Hello from velocityiq!")
+from fastapi import FastAPI
+
+app = FastAPI(title="VelocityIQ", version="0.1.0")
 
 
-if __name__ == "__main__":
-    main()
+@app.get("/health")
+def health():
+    return {"status": "ok"}

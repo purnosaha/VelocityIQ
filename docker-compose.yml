@@ -8,7 +8,7 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-      - duckdb-data:/app/data
+      - ./data:/app/data
     environment:
       - DUCKDB_PATH=/app/data/velocityiq.duckdb
     depends_on:
@@ -21,10 +21,7 @@ services:
       dockerfile: Dockerfile.duckdb
     container_name: velocityiq-duckdb
     volumes:
-      - duckdb-data:/data
+      - ./data:/data
     environment:
       - DUCKDB_PATH=/data/velocityiq.duckdb
-    restart: unless-stopped
-
-volumes:
-  duckdb-data:
+    restart: on-failure
