@@ -13,6 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
+**Run the Streamlit UI:**
+```bash
+uv run streamlit run streamlit_app.py
+```
+
 **Initialize the database schema:**
 ```bash
 python scripts/init_db.py --db-path ./data/velocityiq.duckdb
