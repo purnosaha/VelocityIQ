@@ -1,0 +1,11 @@
+FROM python:3.12-slim
+
+WORKDIR /data
+
+RUN pip install --no-cache-dir duckdb
+
+COPY scripts/init_db.py ./init_db.py
+
+RUN mkdir -p /data
+
+CMD ["python", "init_db.py"]
