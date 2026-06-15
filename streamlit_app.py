@@ -61,7 +61,7 @@ st.markdown(
     border-bottom: 3px solid #CC0000 !important;
     font-weight: 600;
 }
-.stTabs [data-baseweb="tab"]:hover {
+.stTabs [data-baseweb="tab"] {
     color: #CC0000 !important;
 }
 
@@ -212,14 +212,10 @@ with tab_insights:
         data = st.session_state.result
         st.markdown("---")
 
-        # Summary narrative
-        st.markdown("<p class='viq-section-label'>Summary</p>", unsafe_allow_html=True)
-        st.write(data["summary"])
-
         # Data table
         if data.get("data_points"):
             st.markdown(
-                f"<p class='viq-section-label' style='margin-top:16px'>"
+                f"<p class='viq-section-label'>"
                 f"Results &mdash; {data['row_count']} row{'s' if data['row_count'] != 1 else ''}</p>",
                 unsafe_allow_html=True,
             )
@@ -238,6 +234,12 @@ with tab_insights:
         # Generated SQL — collapsible
         with st.expander("View generated SQL"):
             st.code(data["sql"], language="sql")
+
+        # Summary narrative
+        st.markdown(
+            f"<p style='margin-top:16px; color:#333333; font-size:0.95rem'>{data['summary']}</p>",
+            unsafe_allow_html=True,
+        )
 
         st.caption(f"Generated at {data.get('generated_at', '')} · {data['row_count']} rows")
 
