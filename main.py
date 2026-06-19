@@ -1,7 +1,9 @@
 import decimal
 import os
 import re
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import duckdb
 import httpx
@@ -9,6 +11,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 app = FastAPI(title="VelocityIQ", version="0.1.0")
+
+# Make scripts/ importable so the API can reuse the retraining pipeline.
+_SCRIPTS_DIR = Path(__file__).resolve().parent / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -33,6 +40,7 @@ product_master(sku_id PK, product_name, category, brand, package_size, list_pric
   ▸ SCD Type 2. Always add `WHERE pm.is_current = TRUE` to avoid duplicate SKUs.
 
 regional_reference(region_id PK, region_name, country, timezone, population, income_level)
+  ▸ No SCD / no is_current column — do NOT add WHERE is_current filters here.
 
 store_reference(store_id PK, store_name, region_id FK→regional_reference, store_type)
   ▸ store_type IN ('online','physical')
@@ -67,6 +75,8 @@ v_sales_by_product
   avg_unit_price, first_sale_date, last_sale_date
   ▸ USE FOR: product/category ranking, revenue by brand/category (all-time)
   ▸ NO quarter/year/season filtering — aggregates the full date range
+  ▸ NO net_amount column — use net_revenue directly (already aggregated)
+  ▸ NO year/quarter/season columns — cannot filter by time period
 
 v_sales_by_store_region
   store_id, store_name, store_type,
@@ -74,6 +84,8 @@ v_sales_by_store_region
   transaction_count, total_quantity,
   total_revenue, net_revenue, unique_products, active_days
   ▸ USE FOR: store/region performance, geographic breakdowns
+  ▸ NO net_amount column — use net_revenue directly (already aggregated)
+  ▸ NO avg_transaction_value — compute as ROUND(net_revenue / transaction_count, 2)
 
 v_daily_sales_summary
   transaction_date, day_of_week, week_number, month, quarter, year,
@@ -81,7 +93,8 @@ v_daily_sales_summary
   transaction_count, active_stores, unique_products,
   total_quantity, total_revenue, net_revenue, avg_transaction_value
   ▸ USE FOR: daily/monthly/quarterly trends, holiday impact, seasonal patterns
-  ▸ NO sku_id, product_name, or category — it is a daily AGGREGATE view
+  ▸ NO sku_id, product_name, category, or net_amount — it is a daily AGGREGATE view
+  ▸ NO marketing_event column — JOIN to seasonal_calendar to get marketing_event
   ▸ DO NOT join this view to product_master
 
 v_sales_weather_context
@@ -113,9 +126,33 @@ Q: Monthly or seasonal trends?
 Q: Store or region performance?
 → Use v_sales_by_store_region
 
+Q: Top product/category per region (one winner per region)?
+→ Use QUALIFY with ROW_NUMBER() — never ORDER BY inside a subquery IN(...):
+   WITH cat_revenue AS (
+       SELECT rr.region_name, pm.category,
+              ROUND(SUM(st.net_amount),2) AS net_revenue
+       FROM sales_transactions st
+       JOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE
+       JOIN store_reference sr ON st.store_id = sr.store_id
+       JOIN regional_reference rr ON sr.region_id = rr.region_id
+       GROUP BY rr.region_name, pm.category
+   )
+   SELECT region_name, category, net_revenue
+   FROM cat_revenue
+   QUALIFY ROW_NUMBER() OVER (PARTITION BY region_name ORDER BY net_revenue DESC) = 1
+   ORDER BY net_revenue DESC LIMIT 20
+
 Q: Weather effect on sales (by condition or region)?
-→ Use v_sales_weather_context directly — do NOT re-join weather_overlay:
-   SELECT region_name, weather_condition,
+→ ALWAYS use v_sales_weather_context — never re-join weather_overlay for this pattern:
+   SELECT weather_condition,
+          ROUND(SUM(total_revenue),2) AS total_revenue,
+          SUM(transaction_count) AS transactions
+   FROM v_sales_weather_context
+   GROUP BY weather_condition
+   ORDER BY total_revenue DESC LIMIT 20
+
+Q: Weather effect filtered by region?
+→ SELECT region_name, weather_condition,
           ROUND(SUM(total_revenue),2) AS total_revenue,
           SUM(transaction_count) AS transactions
    FROM v_sales_weather_context
@@ -144,6 +181,42 @@ Q: Product + weather combo?
    GROUP BY pm.category, wo.weather_condition
    ORDER BY net_revenue DESC LIMIT 20
 
+Q: Marketing event revenue (avg daily revenue per event)?
+→ marketing_event is in seasonal_calendar, NOT in v_daily_sales_summary — JOIN them:
+   SELECT sc.marketing_event, ROUND(AVG(dss.net_revenue),2) AS avg_daily_revenue, COUNT(*) AS days
+   FROM v_daily_sales_summary dss
+   JOIN seasonal_calendar sc ON dss.transaction_date = sc.date
+   WHERE sc.marketing_event IS NOT NULL
+   GROUP BY sc.marketing_event
+   ORDER BY avg_daily_revenue DESC LIMIT 20
+
+Q: Year-over-year or multi-year revenue comparison?
+→ Use v_daily_sales_summary which has a year column:
+   SELECT year, ROUND(SUM(net_revenue),2) AS total_net_revenue
+   FROM v_daily_sales_summary
+   WHERE year IN (2024, 2025)
+   GROUP BY year
+   ORDER BY year
+
+Q: Top stores or store transaction count (joining sales_transactions + store_reference)?
+→ Always qualify store_id with the table alias to avoid ambiguity:
+   SELECT sr.store_id, sr.store_name, sr.store_type,
+          COUNT(st.transaction_id) AS transaction_count,
+          ROUND(SUM(st.net_amount),2) AS net_revenue
+   FROM sales_transactions st
+   JOIN store_reference sr ON st.store_id = sr.store_id
+   GROUP BY sr.store_id, sr.store_name, sr.store_type
+   ORDER BY net_revenue DESC LIMIT 10
+
+Q: Average transaction value by store type?
+→ Query sales_transactions joined to store_reference — do NOT use a view for this:
+   SELECT sr.store_type,
+          ROUND(SUM(st.net_amount) / COUNT(st.transaction_id), 2) AS avg_transaction_value
+   FROM sales_transactions st
+   JOIN store_reference sr ON st.store_id = sr.store_id
+   GROUP BY sr.store_type
+   ORDER BY avg_transaction_value DESC
+
 ════════════════════════════════════════
 STRICT RULES
 ════════════════════════════════════════
@@ -154,12 +227,29 @@ STRICT RULES
 5. Round monetary values: ROUND(x, 2).
 6. Never reference a column that is not listed above for the table/view you are querying.
 7. When filtering by category use exact values from data — do not guess; use ILIKE if uncertain.
+8. `net_amount` ONLY exists in `sales_transactions`. Views (v_sales_by_product, v_daily_sales_summary, v_sales_by_store_region) have `net_revenue`, NOT `net_amount`. Never use `net_amount` when querying a view.
+9. Only `product_master` has `is_current`. Never add `WHERE is_current` on `regional_reference`, `store_reference`, or any view.
+10. When joining `sales_transactions` (alias st) with `store_reference` (alias sr), ALWAYS qualify `store_id` with its alias: `sr.store_id` in SELECT/GROUP BY, never bare `store_id`.
+11. `marketing_event` is in `seasonal_calendar` only — never in views. To query it, JOIN `v_daily_sales_summary` to `seasonal_calendar` on `transaction_date = date`.
+12. For year/quarter filtering, use `v_daily_sales_summary` (has year, quarter) or join `sales_transactions` to `seasonal_calendar`. Never filter by year/quarter on `v_sales_by_product`.
+13. `year` is a reserved keyword in DuckDB. Always double-quote it when referencing the column: `"year"`. Example: `GROUP BY "year"`, `WHERE "year" IN (2024, 2025)`, `SELECT "year"`.
+14. For weather condition aggregations across all regions, ALWAYS use `v_sales_weather_context` directly. Never join `weather_overlay` manually for this pattern — it causes JOIN order errors.
+15. Never use ORDER BY inside a subquery used with IN(...). Use QUALIFY ROW_NUMBER() OVER (...) = 1 for "top N per group" queries.
 """
 
 
 class InsightRequest(BaseModel):
     question: str
     max_rows: int = 100
+
+
+class PredictRequest(BaseModel):
+    quantity: float
+    unit_price: float
+    discount_amount: float
+    category: str
+    store_type: str
+    is_holiday: bool
 
 
 def _query_db(sql: str) -> tuple[list[str], list[dict]]:
@@ -239,6 +329,95 @@ def _validate_sql(sql: str) -> None:
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/create_model")
+def create_model():
+    """Retrain the XGBoost revenue-forecast model end-to-end.
+
+    Reuses the standalone pipeline in ``scripts/retrain_model.py``: extracts
+    current-month + historical samples from DuckDB, applies exponential-decay
+    weights, trains the model, and persists it to ``./models`` with a run
+    summary in ``./logs``. Runs synchronously in FastAPI's threadpool.
+    """
+    # Imported lazily so the heavy ML stack is only loaded when retraining is
+    # requested (keeps the /insight path and import time light).
+    try:
+        import retrain_model
+    except ImportError as e:  # pragma: no cover - misconfigured deployment
+        raise HTTPException(status_code=500, detail=f"Retraining module unavailable: {e}")
+
+    db_path = os.environ.get("DUCKDB_PATH", retrain_model.DEFAULT_DB_PATH)
+    try:
+        summary = retrain_model.retrain(db_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"Database not found at {db_path}: {e}")
+    except (duckdb.Error, RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Retraining failed: {e}")
+
+    return {
+        "status": "ok",
+        "model_path": summary["model_path"],
+        "log_path": retrain_model.LOG_PATH,
+        "summary": summary,
+    }
+
+
+@app.post("/predict")
+def predict(request: PredictRequest):
+    """Forecast net_amount for a single transaction using the trained XGBoost model.
+
+    Applies the same preprocessing as the training pipeline: numeric coercion,
+    is_holiday cast to int, one-hot encoding of category/store_type, and column
+    alignment to the model's exact feature set (unseen categories → 0).
+    """
+    try:
+        import pandas as pd
+        import retrain_model
+        from xgboost import XGBRegressor
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"ML stack unavailable: {e}")
+
+    model_path = retrain_model.MODEL_PATH
+    if not os.path.exists(model_path):
+        raise HTTPException(
+            status_code=503,
+            detail=f"No trained model found at {model_path}. Run POST /create_model first.",
+        )
+
+    model = XGBRegressor()
+    model.load_model(model_path)
+
+    row = pd.DataFrame([{
+        "quantity": float(request.quantity),
+        "unit_price": float(request.unit_price),
+        "discount_amount": float(request.discount_amount),
+        "category": request.category,
+        "store_type": request.store_type,
+        "is_holiday": int(request.is_holiday),
+    }])
+
+    row = pd.get_dummies(row, columns=["category", "store_type"], prefix=["category", "store_type"])
+    bool_cols = row.select_dtypes(include="bool").columns
+    if len(bool_cols):
+        row[bool_cols] = row[bool_cols].astype(int)
+
+    expected_features = model.get_booster().feature_names
+    row = row.reindex(columns=expected_features, fill_value=0)
+
+    predicted = round(float(model.predict(row)[0]), 2)
+
+    return {
+        "predicted_net_amount": predicted,
+        "inputs": {
+            "quantity": request.quantity,
+            "unit_price": request.unit_price,
+            "discount_amount": request.discount_amount,
+            "category": request.category,
+            "store_type": request.store_type,
+            "is_holiday": request.is_holiday,
+        },
+    }
 
 
 @app.post("/insight")

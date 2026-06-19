@@ -50,6 +50,27 @@ services:
       - SAMPLE_DATA_ROWS=10000
     restart: on-failure
 
+  # One-shot: train the initial revenue-forecast model once the DB is seeded.
+  # Reuses the app image (has libgomp1 for xgboost). Writes ./models + ./logs.
+  # TODO: retire this in favour of a managed scheduler (cron/Airflow) — see
+  #       md/retrain_scheduling.md.
+  model-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-model-init
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    environment:
+      - DUCKDB_PATH=/app/data/velocityiq.duckdb
+    depends_on:
+      duckdb:
+        condition: service_completed_successfully
+    command: ["uv", "run", "python", "scripts/retrain_model.py"]
+    restart: "no"
+
   ollama:
     image: ollama/ollama:latest
     container_name: velocityiq-ollama
