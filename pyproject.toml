@@ -27,7 +27,7 @@ dev = [
 include = ["etl*"]
 
 [tool.setuptools.package-data]
-"*" = ["sql/*.sql", "etl/mappings/*.yaml"]
+"etl" = ["mappings/*.yaml", "sql/init.sql"]
 
 [tool.pytest.ini_options]
 # Only collect the ETL suite. The scripts/test_*.py files are standalone manual

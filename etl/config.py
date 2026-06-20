@@ -17,10 +17,10 @@ _ONE_DAY = timedelta(days=1)
 # --------------------------------------------------------------------------- #
 # Paths
 # --------------------------------------------------------------------------- #
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ETL_DIR = PROJECT_ROOT / "etl"
+ETL_DIR = Path(__file__).resolve().parent
 MAPPINGS_DIR = ETL_DIR / "mappings"
-SQL_INIT = PROJECT_ROOT / "sql" / "init.sql"
+SQL_INIT = ETL_DIR / "sql" / "init.sql"
+PROJECT_ROOT = ETL_DIR.parent
 
 
 def db_path() -> str:

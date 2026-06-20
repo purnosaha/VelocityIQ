@@ -35,7 +35,7 @@ def get_sql_file_path():
     # Determine the project root directory
     script_dir = Path(__file__).parent
     project_root = script_dir.parent
-    sql_file = project_root / "sql" / "init.sql"
+    sql_file = project_root / "etl" / "sql" / "init.sql"
 
     if not sql_file.exists():
         raise FileNotFoundError(f"SQL initialization file not found at {sql_file}")
