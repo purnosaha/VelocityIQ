@@ -1,0 +1,19 @@
+# POS System B — ERP export (ISO datetimes, money as integer cents,
+# 'location' instead of 'store_id').
+source: pos_system_b
+field_map:
+  transaction_ref: source_txn_id
+  sale_dt: txn_timestamp
+  item_code: sku
+  units: quantity
+  price_cents: unit_price
+  discount_cents: discount_amount
+  location: store_id
+transforms:
+  txn_timestamp:
+    type: datetime
+    format: "%Y-%m-%d %H:%M:%S"
+  unit_price:
+    type: cents_to_float
+  discount_amount:
+    type: cents_to_float

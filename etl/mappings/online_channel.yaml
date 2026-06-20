@@ -1,0 +1,24 @@
+# Online channel — e-commerce platform (ISO-8601, CAD currency, line_total
+# rather than a unit price). Demonstrates currency normalization and
+# unit-price back-calculation entirely through declarative transforms.
+source: online_channel
+field_map:
+  order_id: source_txn_id
+  created_at: txn_timestamp
+  product_sku: sku
+  qty_ordered: quantity
+  discount: discount_amount
+  store_id: store_id
+transforms:
+  txn_timestamp:
+    type: datetime
+    format: "%Y-%m-%dT%H:%M:%S"
+  # Prices arrive in CAD: convert the discount and back-calculate unit price
+  # from the line total. CAD->USD uses the POC constant in etl/config.py.
+  discount_amount:
+    type: cad_to_usd
+  unit_price:
+    type: unit_price_from_line_total
+    line_total: line_total
+    quantity: qty_ordered
+    currency: CAD
