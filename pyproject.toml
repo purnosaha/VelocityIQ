@@ -23,6 +23,12 @@ dev = [
     "pytest>=8.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["etl*"]
+
+[tool.setuptools.package-data]
+"*" = ["sql/*.sql", "etl/mappings/*.yaml"]
+
 [tool.pytest.ini_options]
 # Only collect the ETL suite. The scripts/test_*.py files are standalone manual
 # test harnesses (not pytest tests) and must not be auto-collected.
