@@ -14,7 +14,7 @@ services:
       - OLLAMA_BASE_URL=http://ollama:11434
       - OLLAMA_MODEL=qwen2.5:7b
     depends_on:
-      duckdb:
+      model-init:
         condition: service_completed_successfully
       ollama-init:
         condition: service_completed_successfully
@@ -47,8 +47,27 @@ services:
       - ./data:/data
     environment:
       - DUCKDB_PATH=/data/velocityiq.duckdb
-      - SAMPLE_DATA_ROWS=10000
     restart: on-failure
+
+  # One-shot: medallion ETL. Once the schema exists, backfill the previous 36
+  # months (one batch per month) then load the current month. Plain sequential
+  # Python — no orchestrator (see md/etl_pipeline.md). Reuses the app image
+  # (libgomp1) and must fully close its writer connection before app/model-init
+  # open the DuckDB file (single-writer).
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-etl
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DUCKDB_PATH=/app/data/velocityiq.duckdb
+    depends_on:
+      duckdb:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "uv run python etl/backfill.py && uv run python etl/main.py"]
+    restart: "no"
 
   # One-shot: train the initial revenue-forecast model once the DB is seeded.
   # Reuses the app image (has libgomp1 for xgboost). Writes ./models + ./logs.
@@ -66,7 +85,7 @@ services:
     environment:
       - DUCKDB_PATH=/app/data/velocityiq.duckdb
     depends_on:
-      duckdb:
+      etl:
         condition: service_completed_successfully
     command: ["uv", "run", "python", "scripts/retrain_model.py"]
     restart: "no"

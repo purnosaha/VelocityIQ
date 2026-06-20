@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Conventions
 
-- All `.md` files (except this `CLAUDE.md`) must be created inside the `md/` directory at the project root.
+- All `.md` files (except this `CLAUDE.md` and `README.md`) must be created inside the `md/` directory at the project root. `README.md` lives at the project root.
 
 ## Commands
 
