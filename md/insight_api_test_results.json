@@ -1,0 +1,199 @@
+[
+  {
+    "n": 1,
+    "label": "Top products by revenue",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT pm.product_name, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nGROUP BY pm.product_name\nORDER BY",
+    "summary": "The top 10 products by net revenue, ranked from highest to lowest, are Running Shoes ($376,378.70), Wireless Headphones ($252,628.13), Denim Jeans ($236,021.66), Coffee Maker ($164,893.74), Power Bank ($145,485.10), Face Cream ($133,036.86), Desk Lamp ($98,511.72), Classic T-Shirt ($70,914.90), Thro"
+  },
+  {
+    "n": 2,
+    "label": "Category revenue ranking",
+    "status": "OK",
+    "row_count": 4,
+    "sql": "SELECT pm.category, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nGROUP BY pm.category\nORDER BY net_rev",
+    "summary": "The product categories ranked by total net revenue are: Apparel with $683,315.26, followed by Electronics at $435,951.55, Home at $317,956.63, and Beauty at $133,036.86."
+  },
+  {
+    "n": 3,
+    "label": "Brand performance",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT pm.brand, ROUND(SUM(st.net_amount),2) AS total_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nGROUP BY pm.brand\nORDER BY total_reven",
+    "summary": "SportMax generates the most total revenue at $376,378.70, followed closely by AudioTech with $252,628.13 and StyleFit with $236,021.66, highlighting SportMax as the top revenue-generating brand among those listed."
+  },
+  {
+    "n": 4,
+    "label": "Low-performing products",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT pm.product_name, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nGROUP BY pm.product_name\nORDER BY",
+    "summary": "The 10 products with the lowest net revenue, based on the provided data, are the USB-C Cable ($37,838.32), Throw Pillow ($54,551.17), Classic T-Shirt ($70,914.90), Desk Lamp ($98,511.72), Face Cream ($133,036.86), Power Bank ($145,485.10), Coffee Maker ($164,893.74), Denim Jeans ($236,021.66), and W"
+  },
+  {
+    "n": 5,
+    "label": "Product revenue in Q4 2025",
+    "status": "OK",
+    "row_count": 4,
+    "sql": "SELECT pm.category, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nJOIN seasonal_calendar sc ON st.trans",
+    "summary": "In Q4 2025, the net revenue by product category shows that Apparel generated the highest revenue at $52,524.35, followed by Electronics with $35,219.60, Home with $28,509.06, and Beauty with $11,348.64."
+  },
+  {
+    "n": 6,
+    "label": "Top stores by revenue",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT sr.store_id, sr.store_name, sr.store_type,\n       COUNT(st.transaction_id) AS transaction_count,\n       ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN store_referenc",
+    "summary": "The top 10 stores by net revenue are STORE-010 (Mexico City) with $169,371.04, followed closely by STORE-007 (Chicago Center) at $166,797.01 and STORE-005 (Boston Metro) at $162,959.31. These three stores dominate the list with significantly higher net revenues compared to others like STORE-001 (Dow"
+  },
+  {
+    "n": 7,
+    "label": "Online vs physical sales",
+    "status": "OK",
+    "row_count": 2,
+    "sql": "SELECT store_type, ROUND(SUM(net_amount), 2) AS total_net_revenue\nFROM sales_transactions st\nJOIN store_reference sr ON st.store_id = sr.store_id\nWHERE store_type IN ('online', 'physical')\nGROUP BY st",
+    "summary": "The total net revenue from physical stores significantly outpaces that of online stores, with physical stores generating $1,109,795.78 compared to online stores at $460,464.52. This indicates a stronger performance for traditional retail channels over digital ones in this case."
+  },
+  {
+    "n": 8,
+    "label": "Region performance",
+    "status": "OK",
+    "row_count": 5,
+    "sql": "SELECT rr.region_name, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN store_reference sr ON st.store_id = sr.store_id\nJOIN regional_reference rr ON sr.region_id = rr.region",
+    "summary": "The net revenue for each region is as follows: the US East brings in $466,121.55, followed by the US West at $462,105.20, the US Midwest with $323,436.91, Mexico at $169,371.04, and Canada contributing $149,225.60 to the total revenue."
+  },
+  {
+    "n": 9,
+    "label": "Store transaction count",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT sr.store_id, sr.store_name, sr.store_type, COUNT(st.transaction_id) AS transaction_count, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN store_reference sr ON st.sto",
+    "summary": "The store that processed the most transactions was Boston Metro (store_id: STORE-005) with 1,065 transactions. This was followed closely by Mexico City (store_id: STORE-010) with 1,064 transactions. Both are physical stores and have the highest transaction counts among all listed stores."
+  },
+  {
+    "n": 10,
+    "label": "Country-level revenue",
+    "status": "OK",
+    "row_count": 3,
+    "sql": "SELECT rr.country, ROUND(SUM(st.net_amount),2) AS total_revenue\nFROM sales_transactions st\nJOIN store_reference sr ON st.store_id = sr.store_id\nJOIN regional_reference rr ON sr.region_id = rr.region_i",
+    "summary": "The total revenue breakdown by country shows that the USA leads with $1,251,663.66, followed by Mexico at $169,371.04 and Canada at $149,225.60."
+  },
+  {
+    "n": 11,
+    "label": "Monthly revenue trend 2025",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT \n    sc.month, \n    ROUND(SUM(st.net_amount), 2) AS total_net_revenue\nFROM \n    sales_transactions st\nJOIN \n    seasonal_calendar sc ON st.transaction_date = sc.date\nWHERE \n    sc.year = 2025\nG",
+    "summary": "In 2025, the total net revenue fluctuated throughout the months, ranging from a low of $40,293.43 in October to a high of $45,700.79 in August, with an average monthly revenue of approximately $42,861.37."
+  },
+  {
+    "n": 12,
+    "label": "Seasonal sales comparison",
+    "status": "OK",
+    "row_count": 4,
+    "sql": "SELECT season, ROUND(SUM(net_revenue), 2) AS total_revenue\nFROM v_daily_sales_summary\nGROUP BY season\nORDER BY total_revenue DESC LIMIT 10",
+    "summary": "The total revenue for each season is as follows: Summer generated $415,128.74, Spring brought in $399,904.95, Fall saw $383,008.11, and Winter produced $372,218.50."
+  },
+  {
+    "n": 13,
+    "label": "Holiday vs non-holiday revenue",
+    "status": "OK",
+    "row_count": 2,
+    "sql": "SELECT \n    is_holiday,\n    ROUND(SUM(total_revenue), 2) AS total_revenue\nFROM \n    v_daily_sales_summary\nGROUP BY \n    is_holiday\nORDER BY \n    total_revenue DESC\nLIMIT 10",
+    "summary": "On non-holiday days, the total revenue was significantly higher at $1,169,343.94 compared to holiday days, which generated only $482,685.34 in total revenue. This indicates a substantial drop in sales during holidays, with non-holiday revenues being nearly twice as high."
+  },
+  {
+    "n": 14,
+    "label": "Quarterly trend",
+    "status": "OK",
+    "row_count": 4,
+    "sql": "SELECT quarter, ROUND(SUM(net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN seasonal_calendar sc ON st.transaction_date = sc.date\nGROUP BY quarter\nORDER BY quarter\nLIMIT 100",
+    "summary": "The net revenue for each quarter across all years shows a steady performance with Q1 at $380,332.72, Q2 at $388,196.00, Q3 at $407,925.51, and Q4 at $393,806.07."
+  },
+  {
+    "n": 15,
+    "label": "Best sales day of week",
+    "status": "OK",
+    "row_count": 1,
+    "sql": "SELECT \n    sc.day_of_week,\n    ROUND(SUM(st.net_amount) / COUNT(st.transaction_id), 2) AS avg_daily_revenue\nFROM \n    sales_transactions st\nJOIN \n    seasonal_calendar sc ON st.transaction_date = sc.",
+    "summary": "According to the provided data, Monday has the highest average daily revenue at $160.34."
+  },
+  {
+    "n": 16,
+    "label": "Weather condition vs revenue",
+    "status": "API_ERROR",
+    "error": "Generated SQL failed: Binder Error: Referenced table \"sr\" not found!\nCandidate tables: \"st\"\n\nLINE 4: JOIN weather_overlay wo ON wo.region_id = sr.region_id AND wo.date = st.transaction_date\n                                                  ^\nSQL: SELECT wo.weather_condition, ROUND(SUM(st.total_revenue),2) AS total_revenue, COUNT(st.transaction_id) AS transaction_count\nFROM sales_transactions st\nJOIN weather_overlay wo ON wo.region_id = sr.region_id AND wo.date = st.transaction_date\nJOIN store_reference sr ON st.store_id = sr.store_id\nGROUP BY wo.weather_condition\nORDER BY total_revenue DESC LIMIT 100",
+    "sql": ""
+  },
+  {
+    "n": 17,
+    "label": "Rain impact on sales",
+    "status": "OK",
+    "row_count": 1,
+    "sql": "SELECT weather_condition, \n       ROUND(SUM(total_revenue), 2) AS total_revenue,\n       SUM(transaction_count) AS transactions\nFROM v_sales_weather_context\nWHERE weather_condition IN ('Rain', 'Sunny')",
+    "summary": "On rainy days, VelocityIQ's total revenue decreases significantly compared to sunny days, with a total revenue of $109,234.54 versus $263,481.57 on sunny days, respectively. This difference is based on 824 transactions on rainy days, half the number seen on sunny days (1,676)."
+  },
+  {
+    "n": 18,
+    "label": "Temperature and sales",
+    "status": "OK",
+    "row_count": 2,
+    "sql": "SELECT \n    CASE \n        WHEN wo.temperature_avg < 10 THEN 'Cold'\n        WHEN wo.temperature_avg BETWEEN 10 AND 25 THEN 'Mild'\n        ELSE 'Hot'\n    END AS temperature_range,\n    ROUND(AVG(st.net_a",
+    "summary": "The average revenue is highest in the hot temperature range at $158.05, followed by the mild range at $154.95, with no data provided for cold temperatures, suggesting that colder climates may not significantly impact revenue based on this dataset."
+  },
+  {
+    "n": 19,
+    "label": "Category + region combo",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT \n    pm.category, \n    rr.region_name, \n    ROUND(SUM(st.net_amount), 2) AS net_revenue\nFROM \n    sales_transactions st\nJOIN \n    product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = ",
+    "summary": "The net revenue by product category for each region shows that Apparel is the top performer in both the US East (with $207,528.01) and US West ($200,562.28), while Electronics has a strong showing in the US West with $125,418.93. Home products generate significant revenue in the US East ($94,219.04)"
+  },
+  {
+    "n": 20,
+    "label": "Top product in each region",
+    "status": "API_ERROR",
+    "error": "Generated SQL failed: Binder Error: column \"net_revenue\" must appear in the GROUP BY clause or must be part of an aggregate function.\nEither add it to the GROUP BY list, or use \"ANY_VALUE(net_revenue)\" if the exact value of \"net_revenue\" is not important.\n\nLINE 34:             region_name, net_revenue DESC\n                                  ^\nSQL: WITH regional_categories AS (\n    SELECT \n        rr.region_name,\n        pm.category,\n        ROUND(SUM(st.net_amount), 2) AS net_revenue\n    FROM \n        sales_transactions st\n    JOIN \n        product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\n    JOIN \n        store_reference sr ON st.store_id = sr.store_id\n    JOIN \n        regional_reference rr ON sr.region_id = rr.region_id\n    GROUP BY \n        rr.region_name, pm.category\n)\nSELECT \n    region_name,\n    category,\n    net_revenue\nFROM \n    regional_categories\nWHERE \n    (region_name, category) IN (\n        SELECT \n            region_name,\n            category\n        FROM \n            regional_categories\n        GROUP BY \n            region_name, category\n        ORDER BY \n            region_name, net_revenue DESC\n        LIMIT \n            100\n    )\nORDER BY \n    net_revenue DESC\nLIMIT \n    100",
+    "sql": ""
+  },
+  {
+    "n": 21,
+    "label": "Marketing event revenue",
+    "status": "OK",
+    "row_count": 8,
+    "sql": "SELECT sc.marketing_event, ROUND(AVG(dss.net_revenue), 2) AS avg_daily_revenue, COUNT(*) AS days\nFROM v_daily_sales_summary dss\nJOIN seasonal_calendar sc ON dss.transaction_date = sc.date\nWHERE sc.mar",
+    "summary": "The marketing event that drives the highest average daily revenue is Mother's Day, with an average of $1,528.20 per day over a period of 24 days. This significantly outpaces other events like Summer Clearance ($1,466.40), Black Friday ($1,438.46), and Cyber Monday ($1,435.96)."
+  },
+  {
+    "n": 22,
+    "label": "Average transaction value by store type",
+    "status": "OK",
+    "row_count": 2,
+    "sql": "SELECT sr.store_type,\n       ROUND(SUM(st.net_amount) / COUNT(st.transaction_id), 2) AS avg_transaction_value\nFROM sales_transactions st\nJOIN store_reference sr ON st.store_id = sr.store_id\nWHERE sr.s",
+    "summary": "The average transaction value for physical stores is slightly higher at $157.75 compared to online stores, which have an average of $155.30 per transaction."
+  },
+  {
+    "n": 23,
+    "label": "Empty/ambiguous question",
+    "status": "OK",
+    "row_count": 10,
+    "sql": "SELECT pm.category, rr.region_name, ROUND(SUM(st.net_amount),2) AS net_revenue\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nJOIN store_reference ",
+    "summary": "The apparel category generated the highest net revenue at $207,528.01 in the US East region, followed closely by the US West with $200,562.28. The electronics category had a strong showing with combined revenues of $249,736.80 from the US East and US West regions, while home goods brought in $161,62"
+  },
+  {
+    "n": 24,
+    "label": "Specific product lookup",
+    "status": "OK",
+    "row_count": 1,
+    "sql": "SELECT COUNT(st.transaction_id) AS transaction_count\nFROM sales_transactions st\nJOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE\nWHERE pm.category = 'Electronics'\nGROUP BY pm.c",
+    "summary": "In the Electronics category, there have been 3,031 transactions involving SKU products over the observed period."
+  },
+  {
+    "n": 25,
+    "label": "Year over year comparison",
+    "status": "API_ERROR",
+    "error": "Generated SQL failed: Binder Error: Referenced column \"year\" not found in FROM clause!\nCandidate bindings: \"season\", \"quarter\", \"net_revenue\", \"total_revenue\", \"unique_products\"\n\nLINE 8:     year IN (2024, 2025)\n            ^\nSQL: SELECT \n    year, \n    ROUND(SUM(net_revenue), 2) AS total_net_revenue\nFROM \n    v_daily_sales_summary\nWHERE \n    year IN (2024, 2025)\nGROUP BY \n    year\nORDER BY \n    year\nLIMIT 100",
+    "sql": ""
+  }
+]

@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Database files
+data/
+
+# Model artifacts & retrain logs
+models/
+logs/

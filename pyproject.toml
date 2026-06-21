@@ -1,7 +1,35 @@
 [project]
 name = "velocityiq"
 version = "0.1.0"
-description = "Add your description here"
+description = "Sales Intelligence Platform with OLAP Analytics"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "duckdb>=0.9.0",
+    "fastapi>=0.111.0",
+    "httpx>=0.27.0",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "pandera>=0.20",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.4",
+    "streamlit>=1.58.0",
+    "uvicorn[standard]>=0.29.0",
+    "xgboost>=2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["etl*"]
+
+[tool.setuptools.package-data]
+"etl" = ["mappings/*.yaml", "sql/init.sql"]
+
+[tool.pytest.ini_options]
+# Only collect the ETL suite. The scripts/test_*.py files are standalone manual
+# test harnesses (not pytest tests) and must not be auto-collected.
+testpaths = ["tests"]

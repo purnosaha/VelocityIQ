@@ -8,11 +8,34 @@ services:
       - "8000:8000"
     volumes:
       - .:/app
-      - duckdb-data:/app/data
+      - ./data:/app/data
     environment:
       - DUCKDB_PATH=/app/data/velocityiq.duckdb
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b
     depends_on:
-      - duckdb
+      model-init:
+        condition: service_completed_successfully
+      ollama-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+    environment:
+      - VELOCITYIQ_API=http://app:8000
+    depends_on:
+      app:
+        condition: service_started
+    command: ["uv", "run", "streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0"]
     restart: unless-stopped
 
   duckdb:
@@ -21,10 +44,82 @@ services:
       dockerfile: Dockerfile.duckdb
     container_name: velocityiq-duckdb
     volumes:
-      - duckdb-data:/data
+      - ./data:/data
     environment:
       - DUCKDB_PATH=/data/velocityiq.duckdb
+    restart: on-failure
+
+  # One-shot: medallion ETL. Once the schema exists, backfill the previous 36
+  # months (one batch per month) then load the current month. Plain sequential
+  # Python — no orchestrator (see md/etl_pipeline.md). Reuses the app image
+  # (libgomp1) and must fully close its writer connection before app/model-init
+  # open the DuckDB file (single-writer).
+  etl:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-etl
+    volumes:
+      - ./data:/app/data
+    environment:
+      - DUCKDB_PATH=/app/data/velocityiq.duckdb
+    depends_on:
+      duckdb:
+        condition: service_completed_successfully
+    command: ["sh", "-c", "uv run python etl/backfill.py && uv run python etl/main.py"]
+    restart: "no"
+
+  # One-shot: train the initial revenue-forecast model once the DB is seeded.
+  # Reuses the app image (has libgomp1 for xgboost). Writes ./models + ./logs.
+  # TODO: retire this in favour of a managed scheduler (cron/Airflow) — see
+  #       md/retrain_scheduling.md.
+  model-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: velocityiq-model-init
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./logs:/app/logs
+    environment:
+      - DUCKDB_PATH=/app/data/velocityiq.duckdb
+    depends_on:
+      etl:
+        condition: service_completed_successfully
+    command: ["uv", "run", "python", "scripts/retrain_model.py"]
+    restart: "no"
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: velocityiq-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     restart: unless-stopped
 
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: velocityiq-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:7b
+    entrypoint: ["/bin/sh", "-c"]
+    command: >
+      "echo 'Pulling model: '$$OLLAMA_MODEL &&
+       ollama pull $$OLLAMA_MODEL &&
+       echo 'Model pull complete.'"
+    restart: "no"
+
 volumes:
-  duckdb-data:
+  ollama_models:

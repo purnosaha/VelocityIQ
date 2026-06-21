@@ -1,0 +1,19 @@
+# POS System A — in-store terminals (US date strings, '$'-prefixed prices).
+# field_map maps NATIVE column -> CANONICAL column. transforms are keyed by the
+# CANONICAL column they act on.
+source: pos_system_a
+field_map:
+  txn_id: source_txn_id
+  ts: txn_timestamp
+  sku: sku
+  qty: quantity
+  unit_price: unit_price
+  disc: discount_amount
+  store_id: store_id
+transforms:
+  txn_timestamp:
+    type: datetime
+    format: "%m/%d/%Y %H:%M"
+  unit_price:
+    type: currency_string_to_float
+    strip: "$"

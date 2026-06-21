@@ -8,7 +8,15 @@
       "Bash(curl -LsSf https://astral.sh/uv/install.sh)",
       "Bash(sh)",
       "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
-      "Bash(uv init *)"
+      "Bash(uv init *)",
+      "Bash(git config *)",
+      "Bash(brew upgrade *)",
+      "Bash(python3 -m pip install duckdb -q)",
+      "Bash(python3 scripts/init_db.py --db-path ./data/velocityiq.duckdb)",
+      "Bash(python3 -m py_compile scripts/load_sample_data.py)",
+      "Bash(ollama serve *)",
+      "Bash(curl -s http://localhost:11434/api/tags)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\([m['name'] for m in d.get\\('models',[]\\)]\\)\")"
     ]
   }
 }
