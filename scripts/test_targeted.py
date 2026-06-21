@@ -1,6 +1,5 @@
 """Run the 3 previously-failed scenarios + 3 random passing ones."""
 
-import json
 import httpx
 
 BASE_URL = "http://localhost:8000"

@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - reports
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run ruff
+        run: uv run ruff check .
+
+  test:
+    name: Test (ETL + API)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run ETL tests
+        run: uv run pytest tests/ -v
+
+      - name: Initialise database
+        run: |
+          mkdir -p data
+          uv run python scripts/init_db.py --db-path ./data/velocityiq.duckdb --force
+
+      - name: Load sample data
+        run: uv run python scripts/load_sample_data.py --db-path ./data/velocityiq.duckdb --rows 5000
+
+      - name: Run API tests
+        env:
+          DUCKDB_PATH: ./data/velocityiq.duckdb
+        run: uv run pytest api_tests/ -v
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t velocityiq:ci .

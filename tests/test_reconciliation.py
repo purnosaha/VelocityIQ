@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from conftest import KNOWN_SKUS, ORPHAN_SKU, PHYS_STORE, TEST_MONTH, make_canonical
+from conftest import KNOWN_SKUS, ORPHAN_SKU, TEST_MONTH, make_canonical
 
 from etl import config, silver
 

@@ -85,7 +85,9 @@ services:
     depends_on:
       duckdb:
         condition: service_completed_successfully
-    command: ["uv", "run", "python", "scripts/retrain_model.py"]
+    command: >
+      sh -c "uv run python scripts/forecast_model.py &&
+             uv run python scripts/demand_model.py"
     restart: "no"
 
   ollama:
