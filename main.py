@@ -378,6 +378,31 @@ def train_seasonal_forecast():
     }
 
 
+@app.post("/train_demand_model")
+def train_demand_model_endpoint():
+    """Retrain the XGBoost demand (quantity) model end-to-end."""
+    try:
+        import demand_model
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Demand model module unavailable: {e}")
+
+    db_path = os.environ.get("DUCKDB_PATH", demand_model.DEFAULT_DB_PATH)
+    try:
+        summary = demand_model.retrain(db_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"Database not found at {db_path}: {e}")
+    except (duckdb.Error, RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Demand model training failed: {e}")
+
+    return {
+        "status": "ok",
+        "model_path": summary["model_path"],
+        "features_path": summary["features_path"],
+        "log_path": demand_model.LOG_PATH,
+        "summary": summary,
+    }
+
+
 @app.post("/insight")
 def insight(request: InsightRequest):
     """Answer a natural-language question by generating SQL, running it, and summarizing."""
@@ -425,6 +450,67 @@ def insight(request: InsightRequest):
         "row_count": len(safe_records),
         "generated_at": datetime.utcnow().isoformat() + "Z",
     }
+
+
+# ---------------------------------------------------------------------------
+# Demand model inference helpers (shared by Reports 2 and 5)
+# ---------------------------------------------------------------------------
+
+_CATEGORY_FEATURES_SQL = """
+SELECT
+    pm.category,
+    MEDIAN(pm.list_price)                                                        AS median_list_price,
+    MEDIAN(st.unit_price)                                                        AS median_unit_price,
+    MEDIAN(COALESCE(st.discount_amount / NULLIF(st.total_amount, 0), 0.0))      AS actual_discount_rate,
+    MODE() WITHIN GROUP (ORDER BY sr.store_type)                                 AS mode_store_type,
+    MODE() WITHIN GROUP (ORDER BY pm.brand)                                      AS mode_brand,
+    MODE() WITHIN GROUP (ORDER BY sc.season)                                     AS mode_season,
+    MAX(sc.month::INT)                                                           AS latest_month,
+    MAX(sc.quarter::INT)                                                         AS latest_quarter,
+    MAX(sc.is_holiday::INT)                                                      AS mode_is_holiday,
+    MODE() WITHIN GROUP (ORDER BY COALESCE(sc.marketing_event, 'none'))         AS mode_marketing_event
+FROM sales_transactions st
+JOIN product_master pm  ON st.sku_id   = pm.sku_id  AND pm.is_current = TRUE
+JOIN store_reference sr ON st.store_id = sr.store_id
+JOIN seasonal_calendar sc ON st.transaction_date = sc.date
+GROUP BY pm.category
+"""
+
+_BAND_MIDPOINTS = {"0%": 0.0, "0-10%": 0.05, "10-20%": 0.15, "20%+": 0.25}
+_BAND_ORDER = ["0%", "0-10%", "10-20%", "20%+"]
+
+
+def _get_category_features() -> dict[str, dict]:
+    """Return per-category median/mode feature values keyed by category name."""
+    try:
+        _, rows = _query_db(_CATEGORY_FEATURES_SQL)
+        return {r["category"]: {k: _serialize(v) for k, v in r.items()} for r in rows}
+    except Exception:
+        return {}
+
+
+def _run_demand_inference(cat_features: dict[str, dict], discount_rate: float, model, feature_cols: list[str]) -> float:
+    """Predict quantity for a single category at a given discount_rate. Returns 0.0 on error."""
+    try:
+        import demand_model
+        row = {
+            "unit_price": cat_features.get("median_unit_price", 0.0),
+            "list_price": cat_features.get("median_list_price", 0.0),
+            "discount_rate": discount_rate,
+            "month": int(cat_features.get("latest_month") or 1),
+            "quarter": int(cat_features.get("latest_quarter") or 1),
+            "is_holiday": int(cat_features.get("mode_is_holiday") or 0),
+            "category": cat_features.get("category", "unknown"),
+            "brand": cat_features.get("mode_brand", "unknown"),
+            "store_type": cat_features.get("mode_store_type", "unknown"),
+            "season": cat_features.get("mode_season", "unknown"),
+            "marketing_event": cat_features.get("mode_marketing_event", "none"),
+        }
+        df = demand_model.build_inference_df([row], feature_cols)
+        pred = float(model.predict(df)[0])
+        return max(0.0, pred)
+    except Exception:
+        return 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -521,15 +607,60 @@ def report_seasonal_trend(year: int | None = Query(default=None)):
 
 
 @app.get("/reports/category-leakage")
-def report_category_leakage():
-    """Report 2 — gross vs net revenue by category; flags highest discount-eroded category."""
+def report_category_leakage(
+    category: str | None = Query(default=None),
+    target_discount_rate: float = Query(default=0.0, ge=0.0, le=1.0),
+):
+    """Report 2 — gross vs net revenue by category; flags highest discount-eroded category.
+
+    - ``category``: filter to a single category (case-insensitive).
+    - ``target_discount_rate``: counterfactual rate to compare against actual (0.0–1.0, default 0).
+    """
+    sql = "SELECT * FROM v_category_leakage"
+    if category is not None:
+        safe_cat = category.replace("'", "''")
+        sql += f" WHERE category ILIKE '{safe_cat}'"
+    sql += " ORDER BY total_discount DESC"
     try:
-        _, records = _query_db("SELECT * FROM v_category_leakage ORDER BY total_discount DESC")
+        _, records = _query_db(sql)
     except duckdb.Error as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
     top = safe[0] if safe else None
+
+    # Demand model: opportunity revenue at target_discount_rate vs actual per category.
+    model_insights = None
+    model_trained = False
+    try:
+        import demand_model
+        model, feature_cols = demand_model.load_demand_model()
+        if model is not None and feature_cols is not None:
+            model_trained = True
+            cat_feat_map = _get_category_features()
+            insights = []
+            for row in safe:
+                cat = row["category"]
+                cf = cat_feat_map.get(cat)
+                if cf is None:
+                    continue
+                cf["category"] = cat
+                actual_rate = float(cf.get("actual_discount_rate") or 0.0)
+                pred_actual = _run_demand_inference(cf, actual_rate, model, feature_cols)
+                pred_target = _run_demand_inference(cf, target_discount_rate, model, feature_cols)
+                unit_price = float(cf.get("median_unit_price") or 0.0)
+                opportunity = max(0.0, pred_target - pred_actual) * unit_price
+                insights.append({
+                    "category": cat,
+                    "actual_discount_rate": round(actual_rate, 4),
+                    "target_discount_rate": round(target_discount_rate, 4),
+                    "pred_qty_at_actual_discount": round(pred_actual, 2),
+                    "pred_qty_at_target_discount": round(pred_target, 2),
+                    "opportunity_revenue_usd": round(opportunity, 2),
+                })
+            model_insights = insights
+    except Exception:
+        pass
 
     return {
         "report": "category-leakage",
@@ -539,12 +670,21 @@ def report_category_leakage():
             "highest_leakage_category": top["category"] if top else None,
             "highest_discount_rate": top["discount_rate"] if top else None,
         },
+        "model_insights": model_insights,
+        "model_trained": model_trained,
     }
 
 
 @app.get("/reports/discount-effectiveness")
-def report_discount_effectiveness(category: str | None = Query(default=None)):
-    """Report 5 — avg units per discount band; optional category filter."""
+def report_discount_effectiveness(
+    category: str | None = Query(default=None),
+    target_discount_rate: float | None = Query(default=None, ge=0.0, le=1.0),
+):
+    """Report 5 — avg units per discount band; optional category and custom rate filters.
+
+    - ``category``: filter to a single category (case-insensitive).
+    - ``target_discount_rate``: predict demand at a custom rate (0.0–1.0) in addition to band midpoints.
+    """
     sql = "SELECT * FROM v_discount_effectiveness"
     if category is not None:
         safe_cat = category.replace("'", "''")
@@ -574,6 +714,75 @@ def report_discount_effectiveness(category: str | None = Query(default=None)):
     sorted_bands = sorted(band_avg_qty.items(), key=lambda x: _band_order.get(x[0], 9))
     lifts = sorted_bands[-1][1] > sorted_bands[0][1] if len(sorted_bands) >= 2 else None
 
+    # Demand model: predicted qty per (category, band) + inter-band elasticity.
+    elasticity = None
+    elasticity_custom = None
+    model_trained = False
+    try:
+        import demand_model
+        model, feature_cols = demand_model.load_demand_model()
+        if model is not None and feature_cols is not None:
+            model_trained = True
+            cat_feat_map = _get_category_features()
+            el_rows = []
+            # Group rows by category to compute inter-band elasticity.
+            from collections import defaultdict
+            by_cat: dict[str, list] = defaultdict(list)
+            for row in safe:
+                by_cat[row["category"]].append(row)
+
+            for cat, cat_rows in by_cat.items():
+                cf = cat_feat_map.get(cat)
+                if cf is None:
+                    continue
+                cf["category"] = cat
+                # Sort by band order to enable sequential elasticity computation.
+                ordered = sorted(
+                    cat_rows,
+                    key=lambda r: _BAND_ORDER.index(r["discount_band"]) if r["discount_band"] in _BAND_ORDER else 99,
+                )
+                prev_pred: float | None = None
+                prev_rate: float | None = None
+                for row in ordered:
+                    band = row["discount_band"]
+                    rate = _BAND_MIDPOINTS.get(band, 0.0)
+                    pred = _run_demand_inference(cf, rate, model, feature_cols)
+                    elas = None
+                    if prev_pred is not None and prev_rate is not None:
+                        delta_rate = rate - prev_rate
+                        if delta_rate > 0:
+                            elas = round((pred - prev_pred) / delta_rate, 2)
+                    el_rows.append({
+                        "category": cat,
+                        "discount_band": band,
+                        "pred_avg_qty": round(pred, 2),
+                        "sql_avg_qty": round(float(row.get("avg_quantity") or 0), 2),
+                        "elasticity": elas,
+                    })
+                    prev_pred = pred
+                    prev_rate = rate
+            elasticity = el_rows
+
+            # Custom rate prediction: one row per category at the requested rate.
+            if target_discount_rate is not None:
+                custom_preds = []
+                for cat, cf in cat_feat_map.items():
+                    if category is not None and cat.lower() != category.lower():
+                        continue
+                    cf["category"] = cat
+                    pred = _run_demand_inference(cf, target_discount_rate, model, feature_cols)
+                    custom_preds.append({
+                        "category": cat,
+                        "target_discount_rate": round(target_discount_rate, 4),
+                        "pred_qty": round(pred, 2),
+                    })
+                # attach as a separate key so it doesn't mix with band elasticity rows
+                elasticity_custom = custom_preds
+            else:
+                elasticity_custom = None
+    except Exception:
+        elasticity_custom = None
+
     return {
         "report": "discount-effectiveness",
         "generated_at": datetime.utcnow().isoformat() + "Z",
@@ -582,6 +791,9 @@ def report_discount_effectiveness(category: str | None = Query(default=None)):
             "band_avg_quantity": {b: q for b, q in sorted_bands},
             "higher_discount_lifts_quantity": lifts,
         },
+        "elasticity": elasticity,
+        "elasticity_custom": elasticity_custom,
+        "model_trained": model_trained,
     }
 
 
@@ -618,4 +830,43 @@ def report_concentration_risk(top_n: int = Query(default=10, ge=1, le=500)):
             "skus_covering_80pct_revenue": skus_at_80,
             "top_n": top_n,
         },
+    }
+
+
+@app.get("/reports/concentration-risk/scenario")
+def report_concentration_risk_scenario(
+    top_n: int = Query(default=10, ge=1, le=500),
+    shock_pct: float = Query(default=20.0, ge=0.0, le=100.0),
+):
+    """Report 8 scenario — revenue impact if top-N SKUs decline by shock_pct %."""
+    try:
+        _, records = _query_db(
+            f"SELECT * FROM v_sku_revenue_pareto ORDER BY revenue_rank LIMIT {top_n}"
+        )
+        _, total_rows = _query_db("SELECT SUM(net_revenue) AS total FROM v_sales_by_product")
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+    total_revenue = float((total_rows[0]["total"] or 0) if total_rows else 0)
+
+    top_n_revenue = sum(float(r.get("net_revenue") or 0) for r in safe)
+    rest_revenue = total_revenue - top_n_revenue
+    shocked_top_n = top_n_revenue * (1.0 - shock_pct / 100.0)
+    scenario_total = shocked_top_n + rest_revenue
+    revenue_impact = scenario_total - total_revenue
+    revenue_impact_pct = (revenue_impact / total_revenue * 100.0) if total_revenue else 0.0
+
+    return {
+        "report": "concentration-risk-scenario",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "top_n": top_n,
+        "shock_pct": shock_pct,
+        "baseline_total_revenue": round(total_revenue, 2),
+        "top_n_revenue_baseline": round(top_n_revenue, 2),
+        "top_n_revenue_shocked": round(shocked_top_n, 2),
+        "scenario_total_revenue": round(scenario_total, 2),
+        "revenue_impact_usd": round(revenue_impact, 2),
+        "revenue_impact_pct": round(revenue_impact_pct, 2),
+        "data_points": safe,
     }

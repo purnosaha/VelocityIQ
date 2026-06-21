@@ -117,6 +117,25 @@ class TestCategoryLeakage:
         discounts = [r["total_discount"] for r in rows]
         assert discounts == sorted(discounts, reverse=True)
 
+    def test_model_insights_key_present(self, client):
+        body = client.get("/reports/category-leakage").json()
+        assert "model_insights" in body
+        assert "model_trained" in body
+        assert isinstance(body["model_trained"], bool)
+
+    def test_model_insights_shape_when_trained(self, client):
+        body = client.get("/reports/category-leakage").json()
+        if not body.get("model_trained"):
+            pytest.skip("Demand model not trained")
+        assert isinstance(body["model_insights"], list)
+        required = {"category", "pred_qty_at_actual_discount",
+                    "pred_qty_at_zero_discount", "opportunity_revenue_usd"}
+        for row in body["model_insights"]:
+            assert required.issubset(row.keys())
+            assert row["pred_qty_at_actual_discount"] >= 0
+            assert row["pred_qty_at_zero_discount"] >= 0
+            assert row["opportunity_revenue_usd"] >= 0
+
 
 # ---------------------------------------------------------------------------
 # Report 5 — /reports/discount-effectiveness
@@ -170,6 +189,23 @@ class TestDiscountEffectiveness:
         summary = client.get("/reports/discount-effectiveness").json()["summary"]
         lifts = summary["higher_discount_lifts_quantity"]
         assert lifts is None or isinstance(lifts, bool)
+
+    def test_elasticity_key_present(self, client):
+        body = client.get("/reports/discount-effectiveness").json()
+        assert "elasticity" in body
+        assert "model_trained" in body
+        assert isinstance(body["model_trained"], bool)
+
+    def test_elasticity_shape_when_trained(self, client):
+        body = client.get("/reports/discount-effectiveness").json()
+        if not body.get("model_trained"):
+            pytest.skip("Demand model not trained")
+        assert isinstance(body["elasticity"], list)
+        required = {"category", "discount_band", "pred_avg_qty", "sql_avg_qty"}
+        for row in body["elasticity"]:
+            assert required.issubset(row.keys())
+            assert row["pred_avg_qty"] >= 0
+            assert row["sql_avg_qty"] >= 0
 
 
 # ---------------------------------------------------------------------------
@@ -293,3 +329,49 @@ class TestSeasonalForecast:
             "category": "test", "store_type": "online", "is_holiday": False,
         })
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Report 8 scenario — /reports/concentration-risk/scenario
+# ---------------------------------------------------------------------------
+
+class TestConcentrationRiskScenario:
+    def test_200_and_structure(self, client):
+        r = client.get("/reports/concentration-risk/scenario")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["report"] == "concentration-risk-scenario"
+        required = {"top_n", "shock_pct", "baseline_total_revenue",
+                    "top_n_revenue_baseline", "top_n_revenue_shocked",
+                    "scenario_total_revenue", "revenue_impact_usd",
+                    "revenue_impact_pct", "data_points"}
+        assert required.issubset(body.keys())
+
+    def test_zero_shock_equals_baseline(self, client):
+        body = client.get("/reports/concentration-risk/scenario?shock_pct=0").json()
+        assert abs(body["scenario_total_revenue"] - body["baseline_total_revenue"]) < 1.0
+
+    def test_positive_shock_reduces_revenue(self, client):
+        body = client.get("/reports/concentration-risk/scenario?shock_pct=20").json()
+        assert body["revenue_impact_usd"] <= 0
+
+    def test_100_shock_removes_top_n_revenue(self, client):
+        body = client.get("/reports/concentration-risk/scenario?shock_pct=100").json()
+        expected = body["baseline_total_revenue"] - body["top_n_revenue_baseline"]
+        assert abs(body["scenario_total_revenue"] - expected) < 1.0
+
+    def test_impact_pct_sign_matches_impact_usd(self, client):
+        body = client.get("/reports/concentration-risk/scenario?shock_pct=30").json()
+        assert (body["revenue_impact_pct"] <= 0) == (body["revenue_impact_usd"] <= 0)
+
+    def test_shock_pct_out_of_range_rejected(self, client):
+        r = client.get("/reports/concentration-risk/scenario?shock_pct=150")
+        assert r.status_code == 422
+
+    def test_top_n_echoed_in_response(self, client):
+        body = client.get("/reports/concentration-risk/scenario?top_n=5").json()
+        assert body["top_n"] == 5
+
+    def test_top_n_zero_rejected(self, client):
+        r = client.get("/reports/concentration-risk/scenario?top_n=0")
+        assert r.status_code == 422

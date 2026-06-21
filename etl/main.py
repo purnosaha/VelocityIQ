@@ -146,6 +146,10 @@ def main() -> None:
     logger.info("Retraining SARIMA seasonal forecast model...")
     forecast_model.train_and_save(db)
 
+    import demand_model
+    logger.info("Retraining demand (quantity) model...")
+    demand_model.retrain(db)
+
 
 if __name__ == "__main__":
     main()
