@@ -24,11 +24,21 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - uses: reviewdog/action-ruff@v1
+      - name: Install reviewdog
+        uses: reviewdog/action-setup@v1
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          reporter: github-pr-review
-          fail_on_error: false
+          reviewdog_version: latest
+
+      - name: Run ruff via reviewdog
+        env:
+          REVIEWDOG_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run ruff check --output-format=rdjson . \
+          | reviewdog \
+              -f=rdjson \
+              -name="ruff" \
+              -reporter=github-pr-review \
+              -fail-on-error=false
 
   bandit:
     name: Bandit security scan (inline comments)
