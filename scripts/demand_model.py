@@ -23,13 +23,11 @@ import os
 from datetime import datetime, timezone
 
 import duckdb
-import numpy as np
 import pandas as pd
 from xgboost import XGBRegressor
 
 # Reuse generic pipeline steps — no duplication needed.
 from retrain_model import (
-    _stratify_bins,
     combine_and_weight,
     evaluate,
     feature_importances,

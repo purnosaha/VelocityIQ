@@ -34,7 +34,6 @@ import logging
 from pathlib import Path
 from datetime import datetime, timedelta
 import random
-import string
 
 try:
     import duckdb

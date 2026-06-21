@@ -129,11 +129,11 @@ class TestCategoryLeakage:
             pytest.skip("Demand model not trained")
         assert isinstance(body["model_insights"], list)
         required = {"category", "pred_qty_at_actual_discount",
-                    "pred_qty_at_zero_discount", "opportunity_revenue_usd"}
+                    "pred_qty_at_target_discount", "opportunity_revenue_usd"}
         for row in body["model_insights"]:
             assert required.issubset(row.keys())
             assert row["pred_qty_at_actual_discount"] >= 0
-            assert row["pred_qty_at_zero_discount"] >= 0
+            assert row["pred_qty_at_target_discount"] >= 0
             assert row["opportunity_revenue_usd"] >= 0
 
 

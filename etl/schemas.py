@@ -8,7 +8,6 @@ checks (``> 0``, ``>= 0``, not-in-future) apply only to non-null values.
 from __future__ import annotations
 
 import pandas as pd
-import pandera.pandas as pa
 from pandera.pandas import Check, Column, DataFrameSchema
 
 
