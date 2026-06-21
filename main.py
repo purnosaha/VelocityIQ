@@ -7,7 +7,7 @@ from pathlib import Path
 
 import duckdb
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
 app = FastAPI(title="VelocityIQ", version="0.1.0")
@@ -466,4 +466,151 @@ def insight(request: InsightRequest):
         "data_points": safe_records,
         "row_count": len(safe_records),
         "generated_at": datetime.utcnow().isoformat() + "Z",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Report endpoints
+# ---------------------------------------------------------------------------
+
+@app.get("/reports/seasonal-trend")
+def report_seasonal_trend(year: int | None = Query(default=None)):
+    """Report 1 — monthly/seasonal revenue trend with optional year filter and YoY growth."""
+    sql = 'SELECT * FROM v_monthly_sales_summary'
+    if year is not None:
+        sql += f' WHERE "year" = {int(year)}'
+    sql += ' ORDER BY "year", month'
+    try:
+        _, records = _query_db(sql)
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+
+    # Season rollup across the returned rows
+    season_rollup: dict[str, float] = {}
+    for row in safe:
+        s = row["season"]
+        season_rollup[s] = round(season_rollup.get(s, 0.0) + float(row["net_revenue"] or 0), 2)
+
+    # YoY growth % per (year, month) pair — enriches each row in-place
+    by_ym: dict[tuple[int, int], float] = {
+        (r["year"], r["month"]): float(r["net_revenue"] or 0) for r in safe
+    }
+    for row in safe:
+        prev = by_ym.get((row["year"] - 1, row["month"]))
+        if prev is not None and prev != 0:
+            row["yoy_growth_pct"] = round((float(row["net_revenue"] or 0) - prev) / prev * 100, 2)
+        else:
+            row["yoy_growth_pct"] = None
+
+    return {
+        "report": "seasonal-trend",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data_points": safe,
+        "summary": {
+            "season_rollup": season_rollup,
+            "total_months": len(safe),
+        },
+    }
+
+
+@app.get("/reports/category-leakage")
+def report_category_leakage():
+    """Report 2 — gross vs net revenue by category; flags highest discount-eroded category."""
+    try:
+        _, records = _query_db("SELECT * FROM v_category_leakage ORDER BY total_discount DESC")
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+    top = safe[0] if safe else None
+
+    return {
+        "report": "category-leakage",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data_points": safe,
+        "summary": {
+            "highest_leakage_category": top["category"] if top else None,
+            "highest_discount_rate": top["discount_rate"] if top else None,
+        },
+    }
+
+
+@app.get("/reports/discount-effectiveness")
+def report_discount_effectiveness(category: str | None = Query(default=None)):
+    """Report 5 — avg units per discount band; optional category filter."""
+    sql = "SELECT * FROM v_discount_effectiveness"
+    if category is not None:
+        safe_cat = category.replace("'", "''")
+        sql += f" WHERE category ILIKE '{safe_cat}'"
+    sql += " ORDER BY category, discount_band"
+    try:
+        _, records = _query_db(sql)
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+
+    _band_order = {"0%": 0, "0-10%": 1, "10-20%": 2, "20%+": 3}
+    band_agg: dict[str, dict] = {}
+    for row in safe:
+        b = row["discount_band"]
+        if b not in band_agg:
+            band_agg[b] = {"txn": 0, "qty_sum": 0.0}
+        band_agg[b]["txn"] += row["transaction_count"]
+        band_agg[b]["qty_sum"] += float(row["avg_quantity"] or 0) * row["transaction_count"]
+
+    band_avg_qty = {
+        b: round(v["qty_sum"] / v["txn"], 2)
+        for b, v in band_agg.items()
+        if v["txn"] > 0
+    }
+    sorted_bands = sorted(band_avg_qty.items(), key=lambda x: _band_order.get(x[0], 9))
+    lifts = sorted_bands[-1][1] > sorted_bands[0][1] if len(sorted_bands) >= 2 else None
+
+    return {
+        "report": "discount-effectiveness",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data_points": safe,
+        "summary": {
+            "band_avg_quantity": {b: q for b, q in sorted_bands},
+            "higher_discount_lifts_quantity": lifts,
+        },
+    }
+
+
+@app.get("/reports/concentration-risk")
+def report_concentration_risk(top_n: int = Query(default=10, ge=1, le=500)):
+    """Report 8 — SKU revenue Pareto; how many SKUs drive 80 % of revenue."""
+    try:
+        _, records = _query_db(
+            f"SELECT * FROM v_sku_revenue_pareto ORDER BY revenue_rank LIMIT {top_n}"
+        )
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+
+    try:
+        _, pareto = _query_db(
+            "SELECT MIN(revenue_rank) AS sku_count "
+            "FROM v_sku_revenue_pareto WHERE cumulative_revenue_pct >= 0.80"
+        )
+        skus_at_80 = pareto[0]["sku_count"] if pareto else None
+    except duckdb.Error:
+        skus_at_80 = None
+
+    top = safe[0] if safe else None
+
+    return {
+        "report": "concentration-risk",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "data_points": safe,
+        "summary": {
+            "top_sku": top["product_name"] if top else None,
+            "top_sku_revenue_pct": top["revenue_pct"] if top else None,
+            "skus_covering_80pct_revenue": skus_at_80,
+            "top_n": top_n,
+        },
     }
