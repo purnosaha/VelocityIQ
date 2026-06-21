@@ -747,10 +747,144 @@ def _render_concentration_risk() -> None:
         )
 
 
+def _render_revenue_forecast() -> None:
+    """Revenue Forecast — per (category x region) SARIMA, with aggregate rollup.
+
+    One shared header. Category/region filters narrow the slices; the left chart
+    breaks the selection down (by category, or by region when a category is fixed)
+    and the right chart shows the aggregate forecast with a 95% confidence band.
+    """
+    # Single header row: label on the left, horizon dropdown pinned to the right.
+    hdr_col, drop_col = st.columns([19, 1])
+    with hdr_col:
+        _section_label("Revenue Forecast by Category & Region")
+    with drop_col:
+        horizon = st.selectbox(
+            "Horizon",
+            options=list(range(1, 11)),
+            index=2,
+            key="rf_horizon",
+            label_visibility="collapsed",
+        )
+
+    st.caption(
+        "Historical net revenue (left) and the forward SARIMA forecast (right) by "
+        "product category × region. Filter by category and/or region."
+    )
+
+    data = _fetch_report("/reports/revenue-forecast", {"horizon": horizon})
+    if not data:
+        return
+    slices = data.get("slices", [])
+    if not slices:
+        st.info("No forecast data — run POST /train_revenue_forecast first.")
+        return
+
+    categories = ["All categories"] + sorted({s["category"] for s in slices})
+    regions = ["All regions"] + sorted({s["region_name"] for s in slices})
+
+    f1, f2, _ = st.columns([1, 1, 8])
+    with f1:
+        cat_choice = st.selectbox("Category", categories, key="rf_category")
+    with f2:
+        reg_choice = st.selectbox("Region", regions, key="rf_region")
+
+    sel = slices
+    if cat_choice != "All categories":
+        sel = [s for s in sel if s["category"] == cat_choice]
+    if reg_choice != "All regions":
+        sel = [s for s in sel if s["region_name"] == reg_choice]
+    if not sel:
+        st.info("No slices match the selected filters.")
+        return
+
+    # When a category is fixed, break down by region; otherwise by category.
+    group_dim = "region" if cat_choice != "All categories" else "category"
+
+    trend_col, fc_col, _ = st.columns([4, 4, 2])
+
+    # ── Left: historical actuals (/reports/revenue-by-category-region) ───────────
+    with trend_col:
+        st.caption(f"Historical monthly net revenue by {group_dim}.")
+        hist_params: dict = {}
+        if cat_choice != "All categories":
+            hist_params["category"] = cat_choice
+        if reg_choice != "All regions":
+            hist_params["region"] = reg_choice
+        hist = _fetch_report("/reports/revenue-by-category-region", hist_params)
+        hist_points = hist.get("data_points", []) if hist else []
+        if hist_points:
+            hdf = pd.DataFrame(hist_points).rename(columns={"region_name": "region"})
+            hdf["order"] = hdf["year"] * 100 + hdf["month"]
+            hdf["label"] = hdf["month"].apply(lambda m: calendar.month_abbr[m]) + " " + hdf["year"].astype(str)
+            grp = (
+                hdf.groupby([group_dim, "label", "order"], as_index=False)["net_revenue"]
+                .sum()
+                .sort_values("order")
+            )
+            fig = go.Figure()
+            for i, (key, g) in enumerate(grp.groupby(group_dim)):
+                fig.add_trace(go.Scatter(
+                    x=g["label"], y=g["net_revenue"],
+                    mode="lines", name=str(key),
+                    line=dict(color=BRAND_SEQUENCE[i % len(BRAND_SEQUENCE)], width=2),
+                ))
+            fig.update_layout(xaxis_title="Month", yaxis_title="Net Revenue ($)", yaxis_tickformat="$,.0f")
+            st.plotly_chart(_style_fig(fig), use_container_width=True)
+            _raw_table(hist_points, "revenue_by_category_region.csv")
+        else:
+            st.info("No historical data available.")
+
+    # ── Right: forward forecast (aggregate of the selection) with 95% CI ─────────
+    with fc_col:
+        st.caption("Forward SARIMA forecast (aggregate of selection) with 95% CI.")
+        rows = []
+        for s in sel:
+            for p in s["forecast"]:
+                rows.append({
+                    "label": calendar.month_abbr[p["month"]] + " " + str(p["year"]),
+                    "order": p["year"] * 100 + p["month"],
+                    "predicted_net_revenue": p["predicted_net_revenue"],
+                    "lower": p["lower"],
+                    "upper": p["upper"],
+                })
+        agg = (
+            pd.DataFrame(rows)
+            .groupby(["label", "order"], as_index=False)[["predicted_net_revenue", "lower", "upper"]]
+            .sum()
+            .sort_values("order")
+        )
+        fig2 = go.Figure()
+        fig2.add_trace(go.Scatter(
+            x=agg["label"], y=agg["upper"],
+            mode="lines", line=dict(width=0), showlegend=False, name="Upper CI",
+        ))
+        fig2.add_trace(go.Scatter(
+            x=agg["label"], y=agg["lower"],
+            mode="lines", line=dict(width=0),
+            fill="tonexty", fillcolor="rgba(224,85,85,0.15)",
+            showlegend=True, name="95% CI",
+        ))
+        fig2.add_trace(go.Scatter(
+            x=agg["label"], y=agg["predicted_net_revenue"],
+            mode="lines+markers",
+            line=dict(color=BRAND_RED, width=2),
+            marker=dict(size=7, color=BRAND_RED),
+            name="Forecast",
+        ))
+        fig2.update_layout(xaxis_title="Month", yaxis_title="Net Revenue ($)", yaxis_tickformat="$,.0f")
+        _style_fig(fig2)
+        st.plotly_chart(fig2, use_container_width=True)
+        st.caption(f"Model trained at: {data.get('model_trained_at', 'unknown')}")
+        _raw_table(rows, "revenue_forecast.csv")
+
+
 with tab_reports:
     _render_concentration_risk()
     st.markdown("---")
     _render_discount_effectiveness()
+    st.markdown("---")
+    _render_revenue_forecast()
     st.markdown("---")
     _render_seasonal_section()
     st.markdown("---")
