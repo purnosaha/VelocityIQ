@@ -496,6 +496,19 @@ VelocityIQ/
 
 ---
 
+## Architecture Decision Records (ADRs)
+
+Key architectural decisions are documented in the [`md/`](md/) directory:
+
+| ADR | Decision |
+|---|---|
+| [ADR-001](md/adr-001-duckdb-star-schema.md) | DuckDB with Star Schema as the Analytical Store |
+| [ADR-002](md/adr-002-medallion-etl-multiformat.md) | Medallion ETL Architecture with Declarative Multi-Format Ingestion |
+| [ADR-003](md/adr-003-sarima-forecasting.md) | SARIMA for Revenue Forecasting |
+| [ADR-004](md/adr-004-ollama-local-llm.md) | Ollama over Cloud LLM APIs for the AI Insight Layer |
+
+---
+
 ## Contributing
 
 1. Fork the repository and create a feature branch.
