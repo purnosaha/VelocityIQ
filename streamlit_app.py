@@ -1,3 +1,4 @@
+import calendar
 import os
 
 import pandas as pd
@@ -317,36 +318,91 @@ _MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
 _BAND_ORDER = ["0%", "0-10%", "10-20%", "20%+"]
 
 
-def _render_seasonal_trend() -> None:
-    """Report 3 — histogram of net revenue by month, grouped by year."""
-    _section_label("Seasonal Revenue Trend")
-    st.caption("Monthly net revenue distribution across years — spot seasonal peaks and year-over-year shifts at a glance.")
-    data = _fetch_report("/reports/seasonal-trend")
-    if not data:
-        return
-    points = data.get("data_points", [])
-    if not points:
-        st.info("No data available.")
-        return
+def _render_seasonal_section() -> None:
+    """Seasonal Revenue — trend bars + SARIMA forecast under one shared header."""
+    # Single header row: label on the left, horizon dropdown pinned to the right (5 %)
+    hdr_col, drop_col = st.columns([19, 1])
+    with hdr_col:
+        _section_label("Seasonal Revenue")
+    with drop_col:
+        horizon = st.selectbox(
+            "Horizon",
+            options=list(range(1, 11)),
+            index=2,
+            key="sf_horizon",
+            label_visibility="collapsed",
+        )
 
-    df = pd.DataFrame(points)
-    monthly = (
-        df.groupby(["year", "month"], as_index=False)["net_revenue"].sum()
-        .sort_values(["year", "month"])
-    )
-    monthly["month_name"] = monthly["month"].apply(lambda m: _MONTH_NAMES[m])
+    trend_data = _fetch_report("/reports/seasonal-trend")
+    fc_data = _fetch_report("/reports/seasonal-forecast", {"horizon": horizon})
 
-    fig = go.Figure()
-    for i, (yr, grp) in enumerate(monthly.groupby("year")):
-        fig.add_trace(go.Bar(
-            x=[_MONTH_NAMES[m] for m in grp["month"]],
-            y=grp["net_revenue"],
-            name=str(yr),
-            marker_color=BRAND_SEQUENCE[i % len(BRAND_SEQUENCE)],
-        ))
-    fig.update_layout(barmode="group", yaxis_title="Net revenue", xaxis_title="Month")
-    st.plotly_chart(_style_fig(fig), use_container_width=True)
-    _raw_table(points)
+    trend_col, fc_col, _ = st.columns([4, 4, 2])
+
+    # ── Trend chart ────────────────────────────────────────────────────────────
+    with trend_col:
+        st.caption("Monthly net revenue distribution across years.")
+        if trend_data:
+            points = trend_data.get("data_points", [])
+            if points:
+                df = pd.DataFrame(points)
+                monthly = (
+                    df.groupby(["year", "month"], as_index=False)["net_revenue"].sum()
+                    .sort_values(["year", "month"])
+                )
+                fig = go.Figure()
+                for i, (yr, grp) in enumerate(monthly.groupby("year")):
+                    fig.add_trace(go.Bar(
+                        x=[_MONTH_NAMES[m] for m in grp["month"]],
+                        y=grp["net_revenue"],
+                        name=str(yr),
+                        marker_color=BRAND_SEQUENCE[i % len(BRAND_SEQUENCE)],
+                    ))
+                fig.update_layout(barmode="group", yaxis_title="Net revenue", xaxis_title="Month")
+                st.plotly_chart(_style_fig(fig), use_container_width=True)
+                _raw_table(points)
+            else:
+                st.info("No trend data available.")
+
+    # ── Forecast chart ─────────────────────────────────────────────────────────
+    with fc_col:
+        st.caption("SARIMA forward forecast with 95% confidence interval.")
+        if fc_data:
+            points = fc_data.get("forecast", [])
+            if points:
+                df = pd.DataFrame(points)
+                df["label"] = df["month"].apply(lambda m: calendar.month_abbr[m]) + " " + df["year"].astype(str)
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(
+                    x=df["label"], y=df["upper"],
+                    mode="lines", line=dict(width=0),
+                    showlegend=False, name="Upper CI",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=df["label"], y=df["lower"],
+                    mode="lines", line=dict(width=0),
+                    fill="tonexty",
+                    fillcolor="rgba(224,85,85,0.15)",
+                    showlegend=True, name="95% CI",
+                ))
+                fig.add_trace(go.Scatter(
+                    x=df["label"], y=df["predicted_net_revenue"],
+                    mode="lines+markers",
+                    line=dict(color=BRAND_RED, width=2),
+                    marker=dict(size=7, color=BRAND_RED),
+                    name="Forecast",
+                ))
+                fig.update_layout(
+                    xaxis_title="Month",
+                    yaxis_title="Net Revenue ($)",
+                    yaxis_tickformat="$,.0f",
+                )
+                _style_fig(fig)
+                st.plotly_chart(fig, use_container_width=True)
+                trained_at = fc_data.get("model_trained_at", "unknown")
+                st.caption(f"Model trained at: {trained_at}")
+                _raw_table(points)
+            else:
+                st.info("No forecast data — run POST /train_seasonal_forecast first.")
 
 
 def _render_category_leakage() -> None:
@@ -490,9 +546,7 @@ with tab_reports:
     with col:
         _render_discount_effectiveness()
     st.markdown("---")
-    col, _ = st.columns([3, 2])
-    with col:
-        _render_seasonal_trend()
+    _render_seasonal_section()
     st.markdown("---")
     col, _ = st.columns([3, 2])
     with col:

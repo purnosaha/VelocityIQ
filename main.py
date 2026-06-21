@@ -243,15 +243,6 @@ class InsightRequest(BaseModel):
     max_rows: int = 100
 
 
-class PredictRequest(BaseModel):
-    quantity: float
-    unit_price: float
-    discount_amount: float
-    category: str
-    store_type: str
-    is_holiday: bool
-
-
 def _query_db(sql: str) -> tuple[list[str], list[dict]]:
     db_path = os.environ.get("DUCKDB_PATH", "./data/velocityiq.duckdb")
     conn = duckdb.connect(db_path, read_only=True)
@@ -363,60 +354,27 @@ def create_model():
     }
 
 
-@app.post("/predict")
-def predict(request: PredictRequest):
-    """Forecast net_amount for a single transaction using the trained XGBoost model.
-
-    Applies the same preprocessing as the training pipeline: numeric coercion,
-    is_holiday cast to int, one-hot encoding of category/store_type, and column
-    alignment to the model's exact feature set (unseen categories → 0).
-    """
+@app.post("/train_seasonal_forecast")
+def train_seasonal_forecast():
+    """Retrain the SARIMA seasonal revenue forecast model end-to-end."""
     try:
-        import pandas as pd
-        import retrain_model
-        from xgboost import XGBRegressor
+        import forecast_model
     except ImportError as e:
-        raise HTTPException(status_code=500, detail=f"ML stack unavailable: {e}")
+        raise HTTPException(status_code=500, detail=f"Forecast module unavailable: {e}")
 
-    model_path = retrain_model.MODEL_PATH
-    if not os.path.exists(model_path):
-        raise HTTPException(
-            status_code=503,
-            detail=f"No trained model found at {model_path}. Run POST /create_model first.",
-        )
-
-    model = XGBRegressor()
-    model.load_model(model_path)
-
-    row = pd.DataFrame([{
-        "quantity": float(request.quantity),
-        "unit_price": float(request.unit_price),
-        "discount_amount": float(request.discount_amount),
-        "category": request.category,
-        "store_type": request.store_type,
-        "is_holiday": int(request.is_holiday),
-    }])
-
-    row = pd.get_dummies(row, columns=["category", "store_type"], prefix=["category", "store_type"])
-    bool_cols = row.select_dtypes(include="bool").columns
-    if len(bool_cols):
-        row[bool_cols] = row[bool_cols].astype(int)
-
-    expected_features = model.get_booster().feature_names
-    row = row.reindex(columns=expected_features, fill_value=0)
-
-    predicted = round(float(model.predict(row)[0]), 2)
+    db_path = os.environ.get("DUCKDB_PATH", forecast_model.DEFAULT_DB_PATH)
+    try:
+        summary = forecast_model.train_and_save(db_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"Database not found at {db_path}: {e}")
+    except (duckdb.Error, RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Training failed: {e}")
 
     return {
-        "predicted_net_amount": predicted,
-        "inputs": {
-            "quantity": request.quantity,
-            "unit_price": request.unit_price,
-            "discount_amount": request.discount_amount,
-            "category": request.category,
-            "store_type": request.store_type,
-            "is_holiday": request.is_holiday,
-        },
+        "status": "ok",
+        "model_path": summary["model_path"],
+        "log_path": forecast_model.LOG_PATH,
+        "summary": summary,
     }
 
 
@@ -472,6 +430,53 @@ def insight(request: InsightRequest):
 # ---------------------------------------------------------------------------
 # Report endpoints
 # ---------------------------------------------------------------------------
+
+@app.get("/reports/seasonal-forecast")
+def report_seasonal_forecast(horizon: int = Query(default=3, ge=1, le=10)):
+    """Report 1 extension — SARIMA forward forecast with confidence intervals."""
+    try:
+        import forecast_model
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Forecast module unavailable: {e}")
+
+    horizon = max(1, min(horizon, 10))
+
+    model_path = forecast_model.MODEL_PATH
+    if not os.path.exists(model_path):
+        raise HTTPException(
+            status_code=503,
+            detail=f"No trained model found at {model_path}. Run POST /train_seasonal_forecast first.",
+        )
+
+    try:
+        from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+        results = SARIMAXResults.load(model_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load model: {e}")
+
+    try:
+        fc = forecast_model.forecast(results, horizon)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f"Forecast failed: {e}")
+
+    model_trained_at = None
+    log_path = forecast_model.LOG_PATH
+    if os.path.exists(log_path):
+        try:
+            with open(log_path) as fh:
+                import json as _json
+                model_trained_at = _json.load(fh).get("retrain_timestamp")
+        except Exception:
+            pass
+
+    return {
+        "report": "seasonal-forecast",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "horizon": horizon,
+        "forecast": fc,
+        "model_trained_at": model_trained_at,
+    }
+
 
 @app.get("/reports/seasonal-trend")
 def report_seasonal_trend(year: int | None = Query(default=None)):

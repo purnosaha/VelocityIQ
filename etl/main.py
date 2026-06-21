@@ -138,6 +138,14 @@ def main() -> None:
 
     print_summary([metrics], dim_counts, db)
 
+    # lazy import — keeps ETL import-light; scripts/ not on sys.path by default
+    _scripts = str(Path(__file__).resolve().parent.parent / "scripts")
+    if _scripts not in sys.path:
+        sys.path.insert(0, _scripts)
+    import forecast_model
+    logger.info("Retraining SARIMA seasonal forecast model...")
+    forecast_model.train_and_save(db)
+
 
 if __name__ == "__main__":
     main()

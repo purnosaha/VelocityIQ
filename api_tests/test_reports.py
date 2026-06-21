@@ -243,3 +243,53 @@ class TestConcentrationRisk:
     def test_summary_top_n_echoed(self, client):
         summary = client.get("/reports/concentration-risk?top_n=7").json()["summary"]
         assert summary["top_n"] == 7
+
+
+# ---------------------------------------------------------------------------
+# Report 1 extension — /reports/seasonal-forecast + /train_seasonal_forecast
+# ---------------------------------------------------------------------------
+
+class TestSeasonalForecast:
+    def test_503_before_training(self, client, tmp_path, monkeypatch):
+        monkeypatch.setenv("DUCKDB_PATH", str(tmp_path / "nonexistent.duckdb"))
+        import forecast_model
+        monkeypatch.setattr(forecast_model, "MODEL_PATH", str(tmp_path / "no_model.pkl"))
+        r = client.get("/reports/seasonal-forecast")
+        assert r.status_code == 503
+
+    def test_train_returns_200_with_summary(self, client):
+        r = client.post("/train_seasonal_forecast")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["status"] == "ok"
+        assert "summary" in body
+        s = body["summary"]
+        assert "order" in s and "seasonal_order" in s
+        assert "rmse" in s and "mae" in s
+
+    def test_forecast_returns_horizon_points(self, client):
+        client.post("/train_seasonal_forecast")
+        r = client.get("/reports/seasonal-forecast?horizon=3")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["report"] == "seasonal-forecast"
+        assert body["horizon"] == 3
+        fc = body["forecast"]
+        assert len(fc) == 3
+        required = {"year", "month", "predicted_net_revenue", "lower", "upper"}
+        for point in fc:
+            assert required.issubset(point.keys())
+
+    def test_horizon_clamped_to_3(self, client):
+        client.post("/train_seasonal_forecast")
+        r = client.get("/reports/seasonal-forecast?horizon=99")
+        assert r.status_code in (200, 422)
+        if r.status_code == 200:
+            assert len(r.json()["forecast"]) <= 3
+
+    def test_predict_endpoint_removed(self, client):
+        r = client.post("/predict", json={
+            "quantity": 1, "unit_price": 10.0, "discount_amount": 0.0,
+            "category": "test", "store_type": "online", "is_holiday": False,
+        })
+        assert r.status_code == 404
