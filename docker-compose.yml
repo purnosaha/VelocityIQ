@@ -87,7 +87,8 @@ services:
         condition: service_completed_successfully
     command: >
       sh -c "uv run python scripts/forecast_model.py &&
-             uv run python scripts/demand_model.py"
+             uv run python scripts/demand_model.py &&
+             uv run python scripts/revenue_forecast_model.py"
     restart: "no"
 
   ollama:
