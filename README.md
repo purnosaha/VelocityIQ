@@ -71,6 +71,12 @@ Synthetic POS Sources (3)
 
 The ETL pipeline populates a DuckDB star schema. FastAPI reads from DuckDB to serve analytical reports, ML forecasts, and LLM-generated insights. The Streamlit UI consumes the API.
 
+### Logical Architecture (Layered)
+
+![VelocityIQ logical architecture — layered view](architecture_logical.png)
+
+A layered view of the same system: presentation → API → ML / AI-insight / analytics → data → ingestion. Source: [`architecture_logical.drawio`](architecture_logical.drawio) (open in draw.io).
+
 ---
 
 ## Quick Start (Docker)
@@ -506,6 +512,9 @@ Key architectural decisions are documented in the [`md/`](md/) directory:
 | [ADR-002](md/adr-002-medallion-etl-multiformat.md) | Medallion ETL Architecture with Declarative Multi-Format Ingestion |
 | [ADR-003](md/adr-003-sarima-forecasting.md) | SARIMA for Revenue Forecasting |
 | [ADR-004](md/adr-004-ollama-local-llm.md) | Ollama over Cloud LLM APIs for the AI Insight Layer |
+
+**Design notes:** [CI/CD Production Pipeline](md/cicd-design-notes.md) — environments, promotion strategy, gates, and rollback for the receiving team.  
+**Getting started:** [Setup and Run Instructions](md/setup-and-run.md) — clone, run locally, trigger staging and production deploys.
 
 ---
 
