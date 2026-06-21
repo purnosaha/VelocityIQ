@@ -1,10 +1,38 @@
 import os
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
 API_BASE = os.environ.get("VELOCITYIQ_API", "http://localhost:8000")
+
+# Brand palette — keep charts consistent with the red/white UI theme.
+BRAND_RED = "#E05555"
+BRAND_RED_DARK = "#CC3333"
+BRAND_RED_LIGHT = "#FFDDDD"
+BRAND_GREY = "#888888"
+# Qualitative sequence for multi-series charts (year/category breakdowns).
+BRAND_SEQUENCE = ["#E05555", "#666666", "#E8884A", "#4A90E8", "#5AA469", "#9B59B6"]
+
+
+def _fetch_report(path: str, params: dict | None = None) -> dict | None:
+    """GET a /reports/* endpoint, surfacing errors in the UI (mirrors Insights tab)."""
+    try:
+        resp = requests.get(f"{API_BASE}{path}", params=params or {}, timeout=60)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.response.json().get("detail", "")
+        except Exception:
+            pass
+        st.error(f"Error loading {path}: {detail or str(e)}")
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error loading {path}: {e}")
+    return None
 
 EXAMPLE_QUESTIONS = [
     "Top 10 products by revenue",
@@ -248,5 +276,224 @@ with tab_dashboard:
     st.info("Dashboard — coming soon")
 
 # ── Reports tab ───────────────────────────────────────────────────────────────
+def _section_label(text: str) -> None:
+    st.markdown(f"<p class='viq-section-label'>{text}</p>", unsafe_allow_html=True)
+
+
+def _style_fig(fig: go.Figure, height: int = 380) -> go.Figure:
+    """Apply the white/red brand styling shared by every report chart."""
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=10, t=60, b=10),
+        plot_bgcolor="#FFFFFF",
+        paper_bgcolor="#FFFFFF",
+        font=dict(color="#000000", size=13),
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom", y=1.04,
+            xanchor="left", x=0,
+            font=dict(color="#000000", size=12),
+            bgcolor="rgba(255,255,255,0)",
+            bordercolor="rgba(0,0,0,0)",
+        ),
+    )
+    fig.update_xaxes(showgrid=False, linecolor=BRAND_RED_LIGHT,
+                     tickfont=dict(color="#000000", size=12),
+                     title_font=dict(color="#000000", size=13))
+    fig.update_yaxes(gridcolor="#F0F0F0", linecolor=BRAND_RED_LIGHT,
+                     tickfont=dict(color="#000000", size=12),
+                     title_font=dict(color="#000000", size=13))
+    return fig
+
+
+def _raw_table(data_points: list[dict]) -> None:
+    with st.expander("View data"):
+        st.dataframe(pd.DataFrame(data_points), use_container_width=True)
+
+
+_MONTH_NAMES = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+_BAND_ORDER = ["0%", "0-10%", "10-20%", "20%+"]
+
+
+def _render_seasonal_trend() -> None:
+    """Report 3 — histogram of net revenue by month, grouped by year."""
+    _section_label("Seasonal Revenue Trend")
+    st.caption("Monthly net revenue distribution across years — spot seasonal peaks and year-over-year shifts at a glance.")
+    data = _fetch_report("/reports/seasonal-trend")
+    if not data:
+        return
+    points = data.get("data_points", [])
+    if not points:
+        st.info("No data available.")
+        return
+
+    df = pd.DataFrame(points)
+    monthly = (
+        df.groupby(["year", "month"], as_index=False)["net_revenue"].sum()
+        .sort_values(["year", "month"])
+    )
+    monthly["month_name"] = monthly["month"].apply(lambda m: _MONTH_NAMES[m])
+
+    fig = go.Figure()
+    for i, (yr, grp) in enumerate(monthly.groupby("year")):
+        fig.add_trace(go.Bar(
+            x=[_MONTH_NAMES[m] for m in grp["month"]],
+            y=grp["net_revenue"],
+            name=str(yr),
+            marker_color=BRAND_SEQUENCE[i % len(BRAND_SEQUENCE)],
+        ))
+    fig.update_layout(barmode="group", yaxis_title="Net revenue", xaxis_title="Month")
+    st.plotly_chart(_style_fig(fig), use_container_width=True)
+    _raw_table(points)
+
+
+def _render_category_leakage() -> None:
+    """Report 4 — stacked net+discount (= gross) bars with discount_rate overlay."""
+    _section_label("Category Revenue Leakage")
+    st.caption("Compares gross vs net revenue per category — the stacked segment shows how much revenue is lost to discounts, with discount rate overlaid on the right axis.")
+    data = _fetch_report("/reports/category-leakage")
+    if not data:
+        return
+    points = data.get("data_points", [])
+    if not points:
+        st.info("No data available.")
+        return
+
+    df = pd.DataFrame(points)
+    fig = go.Figure()
+    # Stack height = gross_revenue; the discount segment is the visible "leakage".
+    fig.add_trace(go.Bar(
+        x=df["category"], y=df["net_revenue"], name="Net revenue",
+        marker_color=BRAND_RED,
+    ))
+    fig.add_trace(go.Bar(
+        x=df["category"], y=df["total_discount"], name="Discount (leakage)",
+        marker_color=BRAND_RED_LIGHT,
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["category"], y=df["discount_rate"], name="Discount rate",
+        mode="lines+markers", yaxis="y2",
+        line=dict(color=BRAND_RED_DARK, width=2, dash="dot"),
+    ))
+    fig.update_layout(
+        barmode="stack",
+        yaxis_title="Revenue",
+        yaxis2=dict(title="Discount rate", overlaying="y", side="right",
+                    tickformat=".1%", showgrid=False),
+    )
+    st.plotly_chart(_style_fig(fig), use_container_width=True)
+
+    summary = data.get("summary", {})
+    if summary.get("highest_leakage_category"):
+        st.caption(
+            f"Highest leakage: **{summary['highest_leakage_category']}** "
+            f"(discount rate {summary.get('highest_discount_rate', 0):.1%})"
+        )
+    _raw_table(points)
+
+
+def _render_discount_effectiveness() -> None:
+    """Report 2 — pie chart: net revenue share by discount band."""
+    _section_label("Discount Effectiveness")
+    st.caption("Shows what share of net revenue comes from each discount band — helping identify whether heavy discounting drives meaningful volume.")
+    data = _fetch_report("/reports/discount-effectiveness")
+    if not data:
+        return
+    points = data.get("data_points", [])
+    if not points:
+        st.info("No data available.")
+        return
+
+    df = pd.DataFrame(points)
+    categories = ["All categories"] + sorted(df["category"].unique().tolist())
+    choice = st.selectbox("Category", categories, key="de_category")
+    plot_df = df if choice == "All categories" else df[df["category"] == choice]
+
+    band_totals = (
+        plot_df.groupby("discount_band", as_index=False)["net_revenue"].sum()
+    )
+    band_totals["discount_band"] = pd.Categorical(
+        band_totals["discount_band"], categories=_BAND_ORDER, ordered=True
+    )
+    band_totals = band_totals.sort_values("discount_band")
+
+    fig = go.Figure(go.Pie(
+        labels=band_totals["discount_band"],
+        values=band_totals["net_revenue"],
+        hole=0.45,
+        marker=dict(colors=BRAND_SEQUENCE[:len(band_totals)]),
+        textinfo="label+percent",
+        textfont=dict(color="#000000", size=13),
+        insidetextorientation="radial",
+    ))
+    st.plotly_chart(_style_fig(fig), use_container_width=True)
+
+    lifts = data.get("summary", {}).get("higher_discount_lifts_quantity")
+    if lifts is not None:
+        verdict = "do" if lifts else "do not"
+        st.caption(f"Across all data, higher discount bands **{verdict}** show higher avg quantity.")
+    _raw_table(points)
+
+
+def _render_concentration_risk() -> None:
+    """Report 1 — Pareto: descending revenue bars + cumulative % line with 80% marker."""
+    _section_label("Revenue Concentration Risk (Pareto)")
+    st.caption("Ranks SKUs by net revenue and overlays cumulative share — the 80% line reveals how few products drive the majority of revenue.")
+    data = _fetch_report("/reports/concentration-risk")
+    if not data:
+        return
+    points = data.get("data_points", [])
+    if not points:
+        st.info("No data available.")
+        return
+
+    df = pd.DataFrame(points).sort_values("revenue_rank")
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df["product_name"], y=df["net_revenue"], name="Net revenue",
+        marker_color=BRAND_RED,
+    ))
+    fig.add_trace(go.Scatter(
+        x=df["product_name"], y=df["cumulative_revenue_pct"], name="Cumulative %",
+        mode="lines+markers", yaxis="y2",
+        line=dict(color=BRAND_RED_DARK, width=2.5),
+    ))
+    # 80% Pareto reference line on the cumulative axis.
+    fig.add_hline(y=0.80, line_dash="dash", line_color=BRAND_GREY, yref="y2",
+                  annotation_text="80%", annotation_position="right")
+    fig.update_layout(
+        yaxis_title="Net revenue",
+        yaxis2=dict(title="Cumulative %", overlaying="y", side="right",
+                    tickformat=".0%", range=[0, 1.05], showgrid=False),
+        xaxis_title="SKU (ranked)",
+    )
+    st.plotly_chart(_style_fig(fig), use_container_width=True)
+
+    summary = data.get("summary", {})
+    skus = summary.get("skus_covering_80pct_revenue")
+    if skus:
+        st.caption(
+            f"**{skus}** SKU{'s' if skus != 1 else ''} account for ≥80% of net revenue · "
+            f"top SKU: **{summary.get('top_sku')}** ({summary.get('top_sku_revenue_pct', 0):.1%})"
+        )
+    _raw_table(points)
+
+
 with tab_reports:
-    st.info("Reports — coming soon")
+    col, _ = st.columns([3, 2])
+    with col:
+        _render_concentration_risk()
+    st.markdown("---")
+    col, _ = st.columns([3, 2])
+    with col:
+        _render_discount_effectiveness()
+    st.markdown("---")
+    col, _ = st.columns([3, 2])
+    with col:
+        _render_seasonal_trend()
+    st.markdown("---")
+    col, _ = st.columns([3, 2])
+    with col:
+        _render_category_leakage()
