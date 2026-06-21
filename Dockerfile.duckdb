@@ -11,7 +11,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev
 
 COPY scripts/ scripts/
-COPY sql/ sql/
+COPY etl/sql/ etl/sql/
 
 RUN mkdir -p /data
 

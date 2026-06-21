@@ -214,6 +214,75 @@ GROUP BY st.transaction_date, sr.region_id, rr.region_name, wo.temperature_avg,
          wo.precipitation, wo.weather_condition, wo.weather_alert;
 
 -- ============================================================================
+-- REPORT VIEWS
+-- ============================================================================
+
+-- Report 1: Monthly Sales Summary (seasonal trend / YoY)
+CREATE VIEW IF NOT EXISTS v_monthly_sales_summary AS
+SELECT
+    sc."year",
+    sc.month,
+    sc.quarter,
+    sc.season,
+    COUNT(st.transaction_id)                                                         AS transaction_count,
+    SUM(st.quantity)                                                                  AS total_quantity,
+    SUM(st.total_amount)                                                              AS total_revenue,
+    SUM(st.net_amount)                                                                AS net_revenue,
+    ROUND(SUM(st.net_amount) / NULLIF(COUNT(st.transaction_id), 0), 2)               AS avg_transaction_value,
+    SUM(CASE WHEN sc.is_holiday THEN st.net_amount ELSE 0 END)                       AS holiday_net_revenue
+FROM sales_transactions st
+JOIN seasonal_calendar sc ON st.transaction_date = sc.date
+GROUP BY sc."year", sc.month, sc.quarter, sc.season;
+
+-- Report 2: Category Revenue Leakage (discount erosion by category)
+CREATE VIEW IF NOT EXISTS v_category_leakage AS
+SELECT
+    pm.category,
+    SUM(st.total_amount)                                                              AS gross_revenue,
+    SUM(st.discount_amount)                                                           AS total_discount,
+    SUM(st.net_amount)                                                                AS net_revenue,
+    ROUND(SUM(st.discount_amount) / NULLIF(SUM(st.total_amount), 0), 4)              AS discount_rate,
+    COUNT(st.transaction_id)                                                          AS transaction_count,
+    SUM(st.quantity)                                                                  AS total_quantity,
+    ROUND(SUM(st.net_amount) / NULLIF(COUNT(st.transaction_id), 0), 2)               AS revenue_per_transaction
+FROM sales_transactions st
+JOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE
+GROUP BY pm.category;
+
+-- Report 5: Discount Effectiveness (band analysis — do discounts lift units?)
+CREATE VIEW IF NOT EXISTS v_discount_effectiveness AS
+SELECT
+    pm.category,
+    CASE
+        WHEN st.total_amount = 0 OR st.discount_amount = 0     THEN '0%'
+        WHEN st.discount_amount / st.total_amount < 0.10        THEN '0-10%'
+        WHEN st.discount_amount / st.total_amount < 0.20        THEN '10-20%'
+        ELSE '20%+'
+    END                                                                               AS discount_band,
+    COUNT(st.transaction_id)                                                          AS transaction_count,
+    ROUND(AVG(st.quantity), 2)                                                        AS avg_quantity,
+    ROUND(AVG(st.net_amount), 2)                                                      AS avg_net_amount,
+    SUM(st.net_amount)                                                                AS net_revenue,
+    SUM(st.discount_amount)                                                           AS total_discount
+FROM sales_transactions st
+JOIN product_master pm ON st.sku_id = pm.sku_id AND pm.is_current = TRUE
+GROUP BY pm.category, discount_band;
+
+-- Report 8: SKU Revenue Concentration / Pareto
+CREATE VIEW IF NOT EXISTS v_sku_revenue_pareto AS
+SELECT
+    sku_id,
+    product_name,
+    category,
+    brand,
+    net_revenue,
+    RANK() OVER (ORDER BY net_revenue DESC)                                           AS revenue_rank,
+    ROUND(net_revenue / NULLIF(SUM(net_revenue) OVER (), 0), 4)                      AS revenue_pct,
+    ROUND(SUM(net_revenue) OVER (ORDER BY net_revenue DESC) /
+          NULLIF(SUM(net_revenue) OVER (), 0), 4)                                     AS cumulative_revenue_pct
+FROM v_sales_by_product;
+
+-- ============================================================================
 -- STORED PROCEDURES / FUNCTIONS
 -- ============================================================================
 

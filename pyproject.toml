@@ -11,16 +11,19 @@ dependencies = [
     "numpy>=1.26",
     "pandas>=2.2",
     "pandera>=0.20",
+    "plotly>=5.22",
     "pyyaml>=6.0",
     "scikit-learn>=1.4",
     "streamlit>=1.58.0",
     "uvicorn[standard]>=0.29.0",
+    "statsmodels>=0.14",
     "xgboost>=2.0",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.4",
 ]
 
 [tool.setuptools.packages.find]
@@ -32,4 +35,4 @@ include = ["etl*"]
 [tool.pytest.ini_options]
 # Only collect the ETL suite. The scripts/test_*.py files are standalone manual
 # test harnesses (not pytest tests) and must not be auto-collected.
-testpaths = ["tests"]
+testpaths = ["tests", "api_tests"]

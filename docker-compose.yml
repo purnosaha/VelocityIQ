@@ -49,11 +49,9 @@ services:
       - DUCKDB_PATH=/data/velocityiq.duckdb
     restart: on-failure
 
-  # One-shot: medallion ETL. Once the schema exists, backfill the previous 36
-  # months (one batch per month) then load the current month. Plain sequential
-  # Python — no orchestrator (see md/etl_pipeline.md). Reuses the app image
-  # (libgomp1) and must fully close its writer connection before app/model-init
-  # open the DuckDB file (single-writer).
+  # Long-running ETL worker. Starts with docker compose up but does NOT run
+  # the pipeline automatically. Trigger manually:
+  #   docker compose exec etl sh -c "uv run python etl/backfill.py && uv run python etl/main.py"
   etl:
     build:
       context: .
@@ -66,7 +64,7 @@ services:
     depends_on:
       duckdb:
         condition: service_completed_successfully
-    command: ["sh", "-c", "uv run python etl/backfill.py && uv run python etl/main.py"]
+    command: ["sleep", "infinity"]
     restart: "no"
 
   # One-shot: train the initial revenue-forecast model once the DB is seeded.
@@ -85,9 +83,11 @@ services:
     environment:
       - DUCKDB_PATH=/app/data/velocityiq.duckdb
     depends_on:
-      etl:
+      duckdb:
         condition: service_completed_successfully
-    command: ["uv", "run", "python", "scripts/retrain_model.py"]
+    command: >
+      sh -c "uv run python scripts/forecast_model.py &&
+             uv run python scripts/demand_model.py"
     restart: "no"
 
   ollama:
