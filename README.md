@@ -25,6 +25,7 @@ VelocityIQ is a **skeleton / template project** — a reference implementation o
 - Real external data sources (all data is synthetic)
 - Multi-tenant or cloud deployment configs
 - Monitoring, alerting, or observability tooling
+- MLOPs
 
 ---
 
@@ -75,13 +76,7 @@ The ETL pipeline populates a DuckDB star schema. FastAPI reads from DuckDB to se
 
 ## Quick Start (Docker)
 
-**Prerequisites:** Docker and Docker Compose installed.
-
-```bash
-# Clone and start the full stack
-git clone <repo-url>
-cd VelocityIQ
-docker compose up --build
+refer [setup-and-run.md]
 ```
 
 Docker Compose handles startup ordering automatically. Once all containers are healthy:
@@ -434,20 +429,6 @@ python scripts/load_sample_data.py --rows 10000
 
 The DuckDB file path defaults to `./data/velocityiq.duckdb` and can be overridden with the `DUCKDB_PATH` environment variable.
 
----
-
-## Running Tests
-
-```bash
-# ETL unit tests (dedup, validation, adapter, gold grain, reconciliation)
-uv run pytest tests/
-
-# API integration tests (requires the API server to be running on port 8000)
-uv run pytest api_tests/
-
-# Lint
-uv run ruff check .
-```
 
 ---
 
@@ -507,12 +488,9 @@ Key architectural decisions are documented in the [`md/`](md/) directory:
 | [ADR-003](md/adr-003-sarima-forecasting.md) | SARIMA for Revenue Forecasting |
 | [ADR-004](md/adr-004-ollama-local-llm.md) | Ollama over Cloud LLM APIs for the AI Insight Layer |
 
+**CI/CD notes:** [CI/CD Production Pipeline](md/cicd-design-notes.md) — environments, promotion strategy, gates, and rollback for the receiving team.  
+**Getting started:** [Setup and Run Instructions](md/setup-and-run.md) — clone, run locally, trigger staging and production deploys.
+
 ---
 
-## Contributing
 
-1. Fork the repository and create a feature branch.
-2. Run `uv sync` to install dependencies.
-3. Run `uv run pytest tests/` before submitting a PR.
-4. Run `uv run ruff check .` to ensure code style passes.
-5. Open a pull request with a clear description of the change.
