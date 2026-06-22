@@ -21,6 +21,8 @@ A key constraint is that the data is sensitive sales and product information. Se
 
 Ollama (`ollama/ollama:latest`) running **Qwen 2.5 7B** (`qwen2.5:7b`), deployed as a dedicated Docker Compose service alongside the application.
 
+This choice optimises for **zero cost and operational simplicity at this stage, not for maximum accuracy.** A self-hosted open-weight model means no API keys, no per-token billing, and no data egress — the priority for a skeleton a client team will inherit. We knowingly accept lower raw SQL-generation quality than a frontier cloud model (GPT-4, Claude Sonnet) in exchange for a self-contained, free, fully reproducible stack. Because the model is swappable via a single environment variable, accuracy can be upgraded later — by pointing at a larger local model or a cloud API — without any code change, once the use case justifies the added cost.
+
 **Architecture:**
 - `ollama` service starts and exposes port 11434
 - `ollama-init` one-shot container pulls `qwen2.5:7b` on first run; subsequent starts use the cached `ollama_models` named volume

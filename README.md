@@ -8,6 +8,8 @@ VelocityIQ is a **skeleton / template project** — a reference implementation o
 
 ---
 
+**Working assumptions:** [md/assumptions.md](md/assumptions.md)
+
 ## Scope
 
 **What's included:**
@@ -36,6 +38,8 @@ Per-component production-readiness status and the full risk register (severity +
 ---
 
 ## Architecture
+
+![VelocityIQ logical architecture](architecture_logical.png)
 
 ```
 Synthetic POS Sources (3)
