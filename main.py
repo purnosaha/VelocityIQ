@@ -378,6 +378,30 @@ def train_seasonal_forecast():
     }
 
 
+@app.post("/train_revenue_forecast")
+def train_revenue_forecast():
+    """Retrain the per-(category, region) SARIMA revenue forecast models end-to-end."""
+    try:
+        import revenue_forecast_model
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Revenue forecast module unavailable: {e}")
+
+    db_path = os.environ.get("DUCKDB_PATH", revenue_forecast_model.DEFAULT_DB_PATH)
+    try:
+        summary = revenue_forecast_model.train_and_save_all(db_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=f"Database not found at {db_path}: {e}")
+    except (duckdb.Error, RuntimeError, ValueError) as e:
+        raise HTTPException(status_code=422, detail=f"Training failed: {e}")
+
+    return {
+        "status": "ok",
+        "manifest_path": summary["manifest_path"],
+        "log_path": revenue_forecast_model.LOG_PATH,
+        "summary": summary,
+    }
+
+
 @app.post("/train_demand_model")
 def train_demand_model_endpoint():
     """Retrain the XGBoost demand (quantity) model end-to-end."""
@@ -561,6 +585,137 @@ def report_seasonal_forecast(horizon: int = Query(default=3, ge=1, le=10)):
         "horizon": horizon,
         "forecast": fc,
         "model_trained_at": model_trained_at,
+    }
+
+
+@app.get("/reports/revenue-forecast")
+def report_revenue_forecast(
+    category: str | None = Query(default=None),
+    region: str | None = Query(default=None),
+    horizon: int = Query(default=3, ge=1, le=10),
+):
+    """Per-(category, region) SARIMA forward forecast with confidence intervals.
+
+    Optionally filter by ``category`` (exact, case-insensitive) and/or ``region``
+    (matches region_name OR region_id, case-insensitive). Returns one forecast per
+    matching slice plus an ``aggregate`` rollup summed across the returned slices.
+    """
+    try:
+        import forecast_model
+        import revenue_forecast_model
+    except ImportError as e:
+        raise HTTPException(status_code=500, detail=f"Revenue forecast module unavailable: {e}")
+
+    horizon = max(1, min(horizon, 10))
+
+    manifest = revenue_forecast_model.load_manifest()
+    if manifest is None:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                f"No trained model found at {revenue_forecast_model.MANIFEST_PATH}. "
+                "Run POST /train_revenue_forecast first."
+            ),
+        )
+
+    slices_meta = manifest.get("slices", [])
+    if category is not None:
+        slices_meta = [s for s in slices_meta if s["category"].lower() == category.lower()]
+    if region is not None:
+        r = region.lower()
+        slices_meta = [
+            s for s in slices_meta
+            if s["region_name"].lower() == r or s["region_id"].lower() == r
+        ]
+
+    slices_out = []
+    # Accumulate the aggregate rollup keyed on (year, month).
+    agg: dict[tuple[int, int], dict[str, float]] = {}
+    for meta in slices_meta:
+        try:
+            results = revenue_forecast_model.load_slice(meta["key"])
+            fc = forecast_model.forecast(results, horizon)
+        except Exception as e:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Forecast failed for slice {meta['key']}: {e}",
+            )
+        slices_out.append({
+            "category": meta["category"],
+            "region_id": meta["region_id"],
+            "region_name": meta["region_name"],
+            "forecast": fc,
+        })
+        for point in fc:
+            ym = (point["year"], point["month"])
+            bucket = agg.setdefault(
+                ym, {"predicted_net_revenue": 0.0, "lower": 0.0, "upper": 0.0}
+            )
+            bucket["predicted_net_revenue"] += point["predicted_net_revenue"]
+            bucket["lower"] += point["lower"]
+            bucket["upper"] += point["upper"]
+
+    aggregate = [
+        {
+            "year": ym[0],
+            "month": ym[1],
+            "predicted_net_revenue": round(v["predicted_net_revenue"], 2),
+            "lower": round(v["lower"], 2),
+            "upper": round(v["upper"], 2),
+        }
+        for ym, v in sorted(agg.items())
+    ]
+
+    return {
+        "report": "revenue-forecast",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "horizon": horizon,
+        "filters": {"category": category, "region": region},
+        "slices": slices_out,
+        "aggregate": aggregate,
+        "model_trained_at": manifest.get("retrain_timestamp"),
+    }
+
+
+@app.get("/reports/revenue-by-category-region")
+def report_revenue_by_category_region(
+    category: str | None = Query(default=None),
+    region: str | None = Query(default=None),
+    year: int | None = Query(default=None),
+):
+    """Historical monthly net revenue by product category x region (actuals).
+
+    The actuals counterpart to /reports/revenue-forecast, sourced from
+    v_monthly_sales_by_category_region. Optional filters: ``category`` (exact,
+    case-insensitive), ``region`` (matches region_name OR region_id), ``year``.
+    """
+    sql = (
+        'SELECT category, region_id, region_name, "year", month, net_revenue '
+        "FROM v_monthly_sales_by_category_region"
+    )
+    clauses = []
+    if category is not None:
+        clauses.append(f"category ILIKE '{category.replace(chr(39), chr(39) * 2)}'")
+    if region is not None:
+        safe = region.replace("'", "''")
+        clauses.append(f"(region_name ILIKE '{safe}' OR region_id ILIKE '{safe}')")
+    if year is not None:
+        clauses.append(f'"year" = {int(year)}')
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += ' ORDER BY category, region_name, "year", month'
+
+    try:
+        _, records = _query_db(sql)
+    except duckdb.Error as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    safe = [{k: _serialize(v) for k, v in row.items()} for row in records]
+    return {
+        "report": "revenue-by-category-region",
+        "generated_at": datetime.utcnow().isoformat() + "Z",
+        "filters": {"category": category, "region": region, "year": year},
+        "data_points": safe,
     }
 
 

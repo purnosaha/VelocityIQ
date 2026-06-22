@@ -150,6 +150,10 @@ def main() -> None:
     logger.info("Retraining demand (quantity) model...")
     demand_model.retrain(db)
 
+    import revenue_forecast_model
+    logger.info("Retraining per-(category,region) SARIMA revenue forecast models...")
+    revenue_forecast_model.train_and_save_all(db)
+
 
 if __name__ == "__main__":
     main()

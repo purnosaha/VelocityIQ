@@ -234,6 +234,23 @@ FROM sales_transactions st
 JOIN seasonal_calendar sc ON st.transaction_date = sc.date
 GROUP BY sc."year", sc.month, sc.quarter, sc.season;
 
+-- Report 1 (per-slice): Monthly net revenue by product category x region.
+-- Feeds the per-(category, region) SARIMA forecaster (scripts/revenue_forecast_model.py).
+CREATE VIEW IF NOT EXISTS v_monthly_sales_by_category_region AS
+SELECT
+    pm.category,
+    rr.region_id,
+    rr.region_name,
+    sc."year",
+    sc.month,
+    SUM(st.net_amount)                                                                AS net_revenue
+FROM sales_transactions st
+JOIN product_master pm  ON st.sku_id   = pm.sku_id  AND pm.is_current = TRUE
+JOIN store_reference sr ON st.store_id = sr.store_id
+JOIN regional_reference rr ON sr.region_id = rr.region_id
+JOIN seasonal_calendar sc ON st.transaction_date = sc.date
+GROUP BY pm.category, rr.region_id, rr.region_name, sc."year", sc.month;
+
 -- Report 2: Category Revenue Leakage (discount erosion by category)
 CREATE VIEW IF NOT EXISTS v_category_leakage AS
 SELECT
