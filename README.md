@@ -31,15 +31,7 @@ VelocityIQ is a **skeleton / template project** — a reference implementation o
 
 ## Risks & Known Limitations
 
-| Risk | Detail |
-|---|---|
-| **No authentication** | All API endpoints are publicly accessible. Add an auth layer before any network exposure. |
-| **Synthetic data only** | Models are trained on generated data. Accuracy on real data is unknown until retrained. |
-| **DuckDB is single-writer** | Concurrent writes from ETL and the API will conflict. Add a connection pool or separate read/write paths for production. |
-| **ETL is manually triggered** | No scheduler is bundled. Add Airflow, Prefect, or cron for production automation. |
-| **Model drift not handled** | No automated retraining schedule or drift detection. Staleness will degrade forecast quality over time. |
-| **Ollama memory requirement** | `qwen2.5:7b` requires ~6 GB RAM. The `/insight` endpoint will fail on low-memory hosts. |
-| **No persistent observability** | Logs go to stdout only. Add structured logging + alerting before production use. |
+Per-component production-readiness status and the full risk register (severity + mitigations) are documented in [Risks & Known Limitations](md/risks.md) and [Production Readiness Classification](md/production-readiness.md).
 
 ---
 
@@ -489,7 +481,9 @@ Key architectural decisions are documented in the [`md/`](md/) directory:
 | [ADR-004](md/adr-004-ollama-local-llm.md) | Ollama over Cloud LLM APIs for the AI Insight Layer |
 
 **CI/CD notes:** [CI/CD Production Pipeline](md/cicd-design-notes.md) — environments, promotion strategy, gates, and rollback for the receiving team.  
-**Getting started:** [Setup and Run Instructions](md/setup-and-run.md) — clone, run locally, trigger staging and production deploys.
+**Getting started:** [Setup and Run Instructions](md/setup-and-run.md) — clone, run locally, trigger staging and production deploys.  
+**Production readiness:** [Production Readiness Classification](md/production-readiness.md) — per-component maturity, gaps, and what to add to productionise each component.  
+**Risks:** [Risks & Known Limitations](md/risks.md) — full risk register with severity and mitigations.
 
 ---
 
