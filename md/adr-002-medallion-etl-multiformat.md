@@ -35,7 +35,7 @@ Medallion architecture with a YAML-driven declarative adapter.
 
 **Adding a 4th source** requires one new file (`etl/mappings/<source>.yaml`) and one entry in `config.POS_SOURCES`. Zero changes to `adapter.py` or any pipeline stage.
 
-**No orchestration framework** (Airflow, Dagster, Prefect) was introduced — plain sequential Python keeps the skeleton runnable with `uv run python etl/main.py` and zero framework overhead. Revisit if production scheduling, retries, or cross-machine fan-out are required.
+**Pure Python pipeline (for now)** — the ETL is implemented as plain, sequential Python with no orchestration framework (Airflow, Dagster, Prefect). This is a deliberate simplicity choice for the current stage: the entire pipeline runs end-to-end with `uv run python etl/main.py`, has zero framework overhead, and stays easy to read and debug. Orchestration (scheduling, retries, cross-machine fan-out, backfills) can be layered on later when production requirements justify it.
 
 ## Consequences
 
